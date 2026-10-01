@@ -55,9 +55,31 @@ render_allow() {
 PRINT_ALLOW=$(render_allow CUPS_PRINT_SUBNETS "${CUPS_PRINT_SUBNETS:-}")
 ADMIN_ALLOW=$(render_allow CUPS_ADMIN_SUBNETS "${CUPS_ADMIN_SUBNETS:-}")
 
-awk -v print_allow="$PRINT_ALLOW" -v admin_allow="$ADMIN_ALLOW" '
+# Validate a space- or comma-separated list of hostnames (letters, digits,
+# dots, hyphens). Echoes the cleaned, space-separated list.
+check_hostnames() {
+    local name="$1" list="${2//,/ }" out="" h
+    for h in $list; do
+        if [[ ! "$h" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?)*$ ]]; then
+            echo "ERROR: invalid hostname '$h' in $name" >&2
+            return 1
+        fi
+        out+="$h "
+    done
+    printf '%s' "${out% }"
+}
+
+# ServerName defaults to the container hostname; aliases are optional.
+SERVER_NAME=$(check_hostnames CUPS_SERVER_NAME "${CUPS_SERVER_NAME:-$(hostname)}")
+SERVER_ALIASES=$(check_hostnames CUPS_SERVER_ALIASES "${CUPS_SERVER_ALIASES:-}")
+SERVER_ALIASES="${SERVER_NAME}${SERVER_ALIASES:+ $SERVER_ALIASES}"
+
+awk -v print_allow="$PRINT_ALLOW" -v admin_allow="$ADMIN_ALLOW" \
+    -v server_name="$SERVER_NAME" -v server_aliases="$SERVER_ALIASES" '
     /^[[:space:]]*@PRINT_ALLOW@[[:space:]]*$/ { print print_allow; next }
     /^[[:space:]]*@ADMIN_ALLOW@[[:space:]]*$/ { print admin_allow; next }
+    /^ServerName @SERVER_NAME@$/              { print "ServerName " server_name; next }
+    /^ServerAlias @SERVER_ALIASES@$/          { print "ServerAlias " server_aliases; next }
     { print }
 ' /opt/cups/cupsd.conf.template > /etc/cups/cupsd.conf
 chown root:lp /etc/cups/cupsd.conf

@@ -1,10 +1,19 @@
 # cupsd.conf template — rendered to /etc/cups/cupsd.conf by entrypoint.sh on every start.
-# Placeholders (each on its own line):
-#   @PRINT_ALLOW@  -> one "Allow from <cidr>" per entry in CUPS_PRINT_SUBNETS
-#   @ADMIN_ALLOW@  -> one "Allow from <cidr>" per entry in CUPS_ADMIN_SUBNETS
+# Placeholders:
+#   @PRINT_ALLOW@     (own line) -> one "Allow from <cidr>" per entry in CUPS_PRINT_SUBNETS
+#   @ADMIN_ALLOW@     (own line) -> one "Allow from <cidr>" per entry in CUPS_ADMIN_SUBNETS
+#   @SERVER_NAME@     -> CUPS_SERVER_NAME (the name clients print to directly)
+#   @SERVER_ALIASES@  -> CUPS_SERVER_NAME plus CUPS_SERVER_ALIASES (e.g. a reverse-proxy name)
 # Site values live in .env only.
 
 LogLevel warn
+
+# Name CUPS puts in printer URIs it hands to clients: the direct name, never
+# the proxy, so print jobs go straight to the container.
+ServerName @SERVER_NAME@
+# Every Host header CUPS should accept. Requests for any other name are
+# rejected, so a reverse-proxy hostname must be listed here.
+ServerAlias @SERVER_ALIASES@
 
 # Listen on all interfaces inside the container. Network reachability is
 # controlled by macvlan placement and the firewall; CUPS adds per-path ACLs below.
