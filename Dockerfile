@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     avahi-daemon \
     snmp \
     iputils-ping \
+    iproute2 \
     curl \
     openssl \
     && rm -rf /var/lib/apt/lists/*
