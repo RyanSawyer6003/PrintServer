@@ -27,9 +27,33 @@ fi
 # Render cupsd.conf from the template on every start. Site values come from .env,
 # so nothing environment-specific is committed, and repo changes to the template
 # take effect even though /etc/cups is a persistent volume.
-: "${CUPS_ALLOWED_SUBNET:?CUPS_ALLOWED_SUBNET must be set in .env}"
-sed "s#@CUPS_ALLOWED_SUBNET@#${CUPS_ALLOWED_SUBNET}#g" \
-    /opt/cups/cupsd.conf.template > /etc/cups/cupsd.conf
+
+# Build "Allow from" lines from a space- or comma-separated list of IPv4 CIDRs.
+# Every entry is validated so a typo can't silently open or break access.
+render_allow() {
+    local name="$1" list="${2//,/ }" out="" s
+    if [ -z "${list// /}" ]; then
+        echo "ERROR: $name must be set in .env (space-separated CIDRs)" >&2
+        return 1
+    fi
+    for s in $list; do
+        if [[ ! "$s" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$ ]]; then
+            echo "ERROR: invalid CIDR '$s' in $name" >&2
+            return 1
+        fi
+        out+="  Allow from $s"$'\n'
+    done
+    printf '%s' "$out"
+}
+
+PRINT_ALLOW=$(render_allow CUPS_PRINT_SUBNETS "${CUPS_PRINT_SUBNETS:-}")
+ADMIN_ALLOW=$(render_allow CUPS_ADMIN_SUBNETS "${CUPS_ADMIN_SUBNETS:-}")
+
+awk -v print_allow="$PRINT_ALLOW" -v admin_allow="$ADMIN_ALLOW" '
+    /^[[:space:]]*@PRINT_ALLOW@[[:space:]]*$/ { print print_allow; next }
+    /^[[:space:]]*@ADMIN_ALLOW@[[:space:]]*$/ { print admin_allow; next }
+    { print }
+' /opt/cups/cupsd.conf.template > /etc/cups/cupsd.conf
 chown root:lp /etc/cups/cupsd.conf
 chmod 640 /etc/cups/cupsd.conf
 

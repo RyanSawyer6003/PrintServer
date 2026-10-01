@@ -1,9 +1,13 @@
-# cupsd.conf template — @CUPS_ALLOWED_SUBNET@ is filled from .env by entrypoint.sh on every start
+# cupsd.conf template — rendered to /etc/cups/cupsd.conf by entrypoint.sh on every start.
+# Placeholders (each on its own line):
+#   @PRINT_ALLOW@  -> one "Allow from <cidr>" per entry in CUPS_PRINT_SUBNETS
+#   @ADMIN_ALLOW@  -> one "Allow from <cidr>" per entry in CUPS_ADMIN_SUBNETS
+# Site values live in .env only.
 
 LogLevel warn
 
-# Listen on all interfaces inside the container — VLAN isolation is
-# handled by which IPs are even reachable (macvlan), not by CUPS itself
+# Listen on all interfaces inside the container. Network reachability is
+# controlled by macvlan placement and the firewall; CUPS adds per-path ACLs below.
 Listen *:631
 Listen /run/cups/cups.sock
 
@@ -26,30 +30,36 @@ WebInterface Yes
 
 DefaultPolicy default
 
-# --- Admin access: restrict to your services/mgmt VLAN subnet ---
+# --- Root: printer discovery and the public web pages ---
 <Location />
   Order allow,deny
-  Allow from @CUPS_ALLOWED_SUBNET@
+  @PRINT_ALLOW@
 </Location>
 
+# --- Admin: separate subnet list; login always required ---
 <Location /admin>
   AuthType Default
   Require user @SYSTEM
   Order allow,deny
-  Allow from @CUPS_ALLOWED_SUBNET@
+  @ADMIN_ALLOW@
 </Location>
 
 <Location /admin/conf>
   AuthType Default
   Require user @SYSTEM
   Order allow,deny
-  Allow from @CUPS_ALLOWED_SUBNET@
+  @ADMIN_ALLOW@
 </Location>
 
-# --- Job submission: same subnet, since clients submit via IPP here too ---
+# --- Job submission from client subnets (staff and student) ---
 <Location /printers>
   Order allow,deny
-  Allow from @CUPS_ALLOWED_SUBNET@
+  @PRINT_ALLOW@
+</Location>
+
+<Location /classes>
+  Order allow,deny
+  @PRINT_ALLOW@
 </Location>
 
 # --- Job listing: owner or admin can see full details, masked for anyone else ---
@@ -57,7 +67,7 @@ DefaultPolicy default
   AuthType Default
   Require user @OWNER @SYSTEM
   Order allow,deny
-  Allow from @CUPS_ALLOWED_SUBNET@
+  @PRINT_ALLOW@
 </Location>
 
 DefaultEncryption IfRequested
