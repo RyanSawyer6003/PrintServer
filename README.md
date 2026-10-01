@@ -21,7 +21,7 @@ All site-specific values live in `.env`. See `.env.example`. **Don't commit real
 | Variable | Purpose |
 |---|---|
 | `CUPS_SERVER_NAME` / `CUPS_SERVER_ALIASES` | Direct name used in printer URIs, plus any other accepted hostnames (e.g. a reverse proxy) |
-| `CUPS_PRINT_SUBNETS` | Client subnets (staff and student, every site) allowed to print and browse queues |
+| `CUPS_PRINT_SUBNETS` | Client subnets allowed to print and browse queues |
 | `CUPS_ADMIN_SUBNETS` | Subnets allowed to open `/admin`. A login is always required. |
 | `CUPS_ADMIN_USER` / `CUPS_ADMIN_PASSWORD` | Admin account. The password is applied on every start. |
 | `SERVICES_*`, `PRINTER_*`, `CUPS_HOSTNAME` | macvlan interfaces, subnets, gateways, and container IPs |
@@ -36,17 +36,9 @@ Subnet lists are space- or comma-separated IPv4 CIDRs. The container won't start
 - **Job actions:** cancelling, holding, or moving a job is limited to the job's owner or an admin.
 - **Administration:** adding, deleting, or pausing printers requires an authenticated admin, whatever URL the request is sent to. `/admin` also requires TLS.
 
-## Reverse proxy for the admin UI (optional)
+## Reverse proxy
 
-You can put the web UI behind a reverse proxy such as Nginx Proxy Manager under its own hostname, while clients keep printing directly to the container.
-
-1. Set `CUPS_SERVER_NAME` to the container's direct name. This is the name printer URIs use, so jobs never go through the proxy.
-2. Add the proxy hostname to `CUPS_SERVER_ALIASES`. CUPS rejects any `Host` header it doesn't recognize.
-3. Set `CUPS_ADMIN_SUBNETS` to the proxy's IP as a `/32`. All proxied requests reach CUPS from that address, and direct `/admin` access to the container is then refused.
-4. In the proxy, forward with scheme **https** to the container on port 631. `/admin` requires TLS, so plain `http` upstream causes a redirect loop. CUPS's self-signed certificate is fine for this hop.
-5. Restrict who can reach the proxy host itself with the proxy's own access list. CUPS only sees the proxy's IP, not the real client's.
-
-If the proxy is down, administer from the host with `docker exec <container> lpadmin ...`.
+A reverse proxy in front of the web UI is supported. Add its hostname to `CUPS_SERVER_ALIASES`, and forward to the container over **https** on port 631, because `/admin` requires TLS.
 
 ## Known PoC limitations
 
