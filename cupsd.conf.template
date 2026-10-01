@@ -1,0 +1,63 @@
+# cupsd.conf template — @CUPS_ALLOWED_SUBNET@ is filled from .env by entrypoint.sh on every start
+
+LogLevel warn
+
+# Listen on all interfaces inside the container — VLAN isolation is
+# handled by which IPs are even reachable (macvlan), not by CUPS itself
+Listen *:631
+Listen /run/cups/cups.sock
+
+Browsing Off
+BrowseLocalProtocols none
+
+DefaultAuthType Basic
+WebInterface Yes
+
+<Policy default>
+  JobPrivateAccess @OWNER @SYSTEM
+  JobPrivateValues none
+  SubscriptionPrivateAccess @OWNER @SYSTEM
+  SubscriptionPrivateValues none
+
+  <Limit All>
+    Order deny,allow
+  </Limit>
+</Policy>
+
+DefaultPolicy default
+
+# --- Admin access: restrict to your services/mgmt VLAN subnet ---
+<Location />
+  Order allow,deny
+  Allow from @CUPS_ALLOWED_SUBNET@
+</Location>
+
+<Location /admin>
+  AuthType Default
+  Require user @SYSTEM
+  Order allow,deny
+  Allow from @CUPS_ALLOWED_SUBNET@
+</Location>
+
+<Location /admin/conf>
+  AuthType Default
+  Require user @SYSTEM
+  Order allow,deny
+  Allow from @CUPS_ALLOWED_SUBNET@
+</Location>
+
+# --- Job submission: same subnet, since clients submit via IPP here too ---
+<Location /printers>
+  Order allow,deny
+  Allow from @CUPS_ALLOWED_SUBNET@
+</Location>
+
+# --- Job listing: owner or admin can see full details, masked for anyone else ---
+<Location /jobs>
+  AuthType Default
+  Require user @OWNER @SYSTEM
+  Order allow,deny
+  Allow from @CUPS_ALLOWED_SUBNET@
+</Location>
+
+DefaultEncryption IfRequested

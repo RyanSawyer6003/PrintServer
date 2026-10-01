@@ -1,0 +1,42 @@
+services:
+  cups:
+    build: .
+    container_name: ${CUPS_CONTAINER_NAME:-cups}
+    hostname: ${CUPS_HOSTNAME:?set CUPS_HOSTNAME in .env}
+    env_file:
+      - .env
+    networks:
+      services_vlan:
+        ipv4_address: ${SERVICES_IP:?set SERVICES_IP in .env}
+      printer_vlan:
+        ipv4_address: ${PRINTER_IP:?set PRINTER_IP in .env}
+    volumes:
+      - cups_config:/etc/cups
+      - cups_spool:/var/spool/cups
+      - cups_logs:/var/log/cups
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN
+
+networks:
+  services_vlan:
+    driver: macvlan
+    driver_opts:
+      parent: ${SERVICES_PARENT_IF:?set SERVICES_PARENT_IF in .env}
+    ipam:
+      config:
+        - subnet: ${SERVICES_SUBNET:?set SERVICES_SUBNET in .env}
+          gateway: ${SERVICES_GATEWAY:?set SERVICES_GATEWAY in .env}
+  printer_vlan:
+    driver: macvlan
+    driver_opts:
+      parent: ${PRINTER_PARENT_IF:?set PRINTER_PARENT_IF in .env}
+    ipam:
+      config:
+        - subnet: ${PRINTER_SUBNET:?set PRINTER_SUBNET in .env}
+          gateway: ${PRINTER_GATEWAY:?set PRINTER_GATEWAY in .env}
+
+volumes:
+  cups_config:
+  cups_spool:
+  cups_logs:
