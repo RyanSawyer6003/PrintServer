@@ -9,17 +9,32 @@ git clone <this repo> && cd <repo>
 cp .env.example .env        # fill in real values; .env is gitignored
 docker compose up -d --build
 docker logs <CUPS_CONTAINER_NAME>
+docker ps                   # STATUS should show (healthy) within ~1 minute
 ```
 
-The admin UI is at `https://<SERVICES_IP>:631/admin`. Sign in with the `CUPS_ADMIN_USER` account.
+The admin UI is at `https://<SERVICES_IP>:631/admin` and is HTTPS only. Sign in with the `CUPS_ADMIN_USER` account. Until a real certificate is installed, CUPS uses a self-signed one, so expect a browser warning.
 
 ## Configuration
 
-All site-specific values (interfaces, subnets, IPs, hostname, allowed subnet) live in `.env`. See `.env.example`. **Don't commit real values.**
+All site-specific values live in `.env`. See `.env.example`. **Don't commit real values.**
 
-`cupsd.conf` is rendered from `cupsd.conf.template` on every container start. Template changes take effect on restart, even though `/etc/cups` is a persistent volume.
+| Variable | Purpose |
+|---|---|
+| `CUPS_PRINT_SUBNETS` | Client subnets (staff and student, every site) allowed to print and browse queues |
+| `CUPS_ADMIN_SUBNETS` | Subnets allowed to open `/admin`. A login is always required. |
+| `CUPS_ADMIN_USER` / `CUPS_ADMIN_PASSWORD` | Admin account. The password is applied on every start. |
+| `SERVICES_*`, `PRINTER_*`, `CUPS_HOSTNAME` | macvlan interfaces, subnets, gateways, and container IPs |
+
+Subnet lists are space- or comma-separated IPv4 CIDRs. The container won't start if a list is empty or contains a malformed entry.
+
+`cupsd.conf` is rendered from `cupsd.conf.template` on every start and checked with `cupsd -t` before the scheduler launches. Template changes take effect on restart, even though `/etc/cups` is a persistent volume.
+
+## Access model
+
+- **Printing and status queries:** open to `CUPS_PRINT_SUBNETS`.
+- **Job actions:** cancelling, holding, or moving a job is limited to the job's owner or an admin.
+- **Administration:** adding, deleting, or pausing printers requires an authenticated admin, whatever URL the request is sent to. `/admin` also requires TLS.
 
 ## Known PoC limitations
 
-- The admin user is created only when it doesn't already exist in the container. Changing `CUPS_ADMIN_PASSWORD` requires recreating the container.
-- With macvlan, the Docker host can't reach the container's IPs directly. Test from another machine on the client subnet.
+- With macvlan, the Docker host can't reach the container's IPs directly. Test from another machine on a client subnet.

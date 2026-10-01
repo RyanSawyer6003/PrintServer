@@ -61,8 +61,10 @@ WebInterface Yes
 DefaultPolicy default
 
 # --- Root: printer discovery and the public web pages ---
+#     localhost is allowed so the container healthcheck can query the scheduler.
 <Location />
   Order allow,deny
+  Allow localhost
   @PRINT_ALLOW@
 </Location>
 
