@@ -8,6 +8,10 @@ services:
     networks:
       services_vlan:
         ipv4_address: ${SERVICES_IP:?set SERVICES_IP in .env}
+        # The container's default route must use this network. Without a
+        # priority, Docker picks the network whose name sorts first, which
+        # is the printer network. Needs Docker Engine 28+ / Compose 2.33.1+.
+        gw_priority: 1
       printer_vlan:
         ipv4_address: ${PRINTER_IP:?set PRINTER_IP in .env}
     volumes:

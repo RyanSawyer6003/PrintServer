@@ -36,6 +36,14 @@ Subnet lists are space- or comma-separated IPv4 CIDRs. The container won't start
 - **Job actions:** cancelling, holding, or moving a job is limited to the job's owner or an admin.
 - **Administration:** adding, deleting, or pausing printers requires an authenticated admin, whatever URL the request is sent to. `/admin` also requires TLS.
 
+## Routing
+
+Requires Docker Engine 28+ and Compose 2.33.1+ for `gw_priority`. The container's default route must leave through the client-facing network, never the printer network. Check after every deploy:
+
+```bash
+docker exec <container> ip route    # "default via" must be SERVICES_GATEWAY
+```
+
 ## Reverse proxy
 
 A reverse proxy in front of the web UI is supported. Add its hostname to `CUPS_SERVER_ALIASES`, and forward to the container over **https** on port 631, because `/admin` requires TLS.
