@@ -92,4 +92,19 @@ if ! /usr/sbin/cupsd -t -c /etc/cups/cupsd.conf; then
     exit 1
 fi
 
+# --- Usage reports -----------------------------------------------------------
+# CUPS serves the usage reports as static files from <DocumentRoot>/usage, where
+# docker-compose mounts them. Warn if they are mounted somewhere CUPS won't look.
+CUPS_FILES_CONF=/etc/cups/cups-files.conf
+DOCROOT=$(sed -n 's/^DocumentRoot[[:space:]]\{1,\}\(\/[^[:space:]]*\).*/\1/p' "$CUPS_FILES_CONF" 2>/dev/null | tail -n 1)
+if [ -z "$DOCROOT" ]; then
+    # Not set: the commented-out line in the stock file shows the built-in default.
+    DOCROOT=$(sed -n 's/^#[[:space:]]*DocumentRoot[[:space:]]\{1,\}\(\/[^[:space:]]*\).*/\1/p' "$CUPS_FILES_CONF" 2>/dev/null | tail -n 1)
+fi
+if [ -n "$DOCROOT" ] && [ ! -d "$DOCROOT/usage" ]; then
+    echo "WARNING: the usage reports are not mounted where CUPS serves web pages,"
+    echo "so /usage/ will return Not Found. Add this line to .env and run"
+    echo "'docker compose up -d':  CUPS_DOCROOT=$DOCROOT"
+fi
+
 exec /usr/sbin/cupsd -f

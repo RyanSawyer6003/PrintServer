@@ -35,7 +35,44 @@ Subnet lists are space- or comma-separated IPv4 CIDRs. The container won't start
 - **Printing and status queries:** open to `CUPS_PRINT_SUBNETS`.
 - **Job actions:** cancelling, holding, or moving a job is limited to the job's owner or an admin.
 - **Administration:** adding, deleting, or pausing printers requires an authenticated admin, whatever URL the request is sent to. `/admin` also requires TLS.
+- **Usage reports:** `/usage/` requires an authenticated admin and TLS, like `/admin`.
 - **Server configuration:** `cupsd.conf` can't be changed through the web interface or `cupsctl`; those requests are refused. Change settings in `.env` (or the template) and restart, so the access rules always match what's in the repo.
+
+## Usage reports
+
+A second container, `usage`, reads the CUPS job log and writes a usage report that CUPS serves at `https://<server>/usage/`. The page requires an admin login, the same as `/admin`.
+
+It is **report only**. No print job is ever blocked or changed. The container has no network access and reads the log files read-only.
+
+The report shows, for each month:
+
+- pages and jobs per person, against the monthly allowance, with people over it flagged
+- pages and jobs per printer
+- the job log (time, person, printer, pages, sides, color, computer, document name)
+- CSV downloads of the totals and the full job log
+
+Settings in `.env`:
+
+| Variable | Purpose |
+|---|---|
+| `USAGE_MONTHLY_PAGES` | Monthly allowance per person. `0` means no allowance. |
+| `USAGE_TIMEZONE` | Time zone for month boundaries and displayed times |
+
+Give one person a different allowance:
+
+```bash
+docker compose exec usage usage allowance set <user> 800
+docker compose exec usage usage allowance clear <user>
+docker compose exec usage usage allowance list
+```
+
+Notes:
+
+- A job appears on the report within a minute of finishing.
+- People are grouped by the user name the client sends, without any `DOMAIN\` prefix and ignoring case. CUPS does not verify that name unless you require authentication for printing.
+- Page counts are the totals CUPS records when each job finishes. Check them against a printer's own counter before relying on them.
+- History is kept in the `usage_data` volume, so it survives CUPS log rotation and rebuilds. Back that volume up.
+- Tests: `python3 -m unittest discover -s usage`
 
 ## Routing
 

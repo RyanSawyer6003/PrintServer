@@ -8,6 +8,10 @@
 
 LogLevel warn
 
+# One line per finished job, in a layout the usage reports can read reliably.
+# The job name comes last because it is free text and may contain anything.
+PageLogFormat %p|%u|%j|%T|%P|%C|%{job-originating-host-name}|%{sides}|%{print-color-mode}|%{job-name}
+
 # Name CUPS puts in printer URIs it hands to clients: the direct name, never
 # the proxy, so print jobs go straight to the container.
 ServerName @SERVER_NAME@
@@ -108,6 +112,15 @@ DefaultPolicy default
 </Location>
 
 <Location /admin/log>
+  AuthType Default
+  Require user @SYSTEM
+  Encryption Required
+  Order allow,deny
+  @ADMIN_ALLOW@
+</Location>
+
+# --- Usage reports: static pages written by the usage service. Admins only. ---
+<Location /usage>
   AuthType Default
   Require user @SYSTEM
   Encryption Required

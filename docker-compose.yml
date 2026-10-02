@@ -18,6 +18,8 @@ services:
       - cups_config:/etc/cups
       - cups_spool:/var/spool/cups
       - cups_logs:/var/log/cups
+      # Usage reports, written by the usage service and served by CUPS at /usage/.
+      - usage_reports:${CUPS_DOCROOT:-/usr/share/cups/doc-root}/usage:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "lpstat -r | grep -qx 'scheduler is running'"]
@@ -25,6 +27,32 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  # Reads the CUPS page log and writes the usage reports. Report only: it has
+  # no network access and cannot see or change print jobs.
+  usage:
+    build: ./usage
+    container_name: ${USAGE_CONTAINER_NAME:-cups-usage}
+    environment:
+      USAGE_MONTHLY_PAGES: ${USAGE_MONTHLY_PAGES:-0}
+      TZ: ${USAGE_TIMEZONE:-UTC}
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - cups_logs:/var/log/cups:ro
+      - usage_data:/data
+      - usage_reports:/reports
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(( $$(date +%s) - $$(cat /data/heartbeat) )) -lt 300"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 networks:
   services_vlan:
@@ -48,3 +76,5 @@ volumes:
   cups_config:
   cups_spool:
   cups_logs:
+  usage_data:
+  usage_reports:
