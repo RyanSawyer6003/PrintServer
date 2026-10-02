@@ -35,6 +35,7 @@ Subnet lists are space- or comma-separated IPv4 CIDRs. The container won't start
 - **Printing and status queries:** open to `CUPS_PRINT_SUBNETS`.
 - **Job actions:** cancelling, holding, or moving a job is limited to the job's owner or an admin.
 - **Administration:** adding, deleting, or pausing printers requires an authenticated admin, whatever URL the request is sent to. `/admin` also requires TLS.
+- **Server configuration:** `cupsd.conf` can't be changed through the web interface or `cupsctl`; those requests are refused. Change settings in `.env` (or the template) and restart, so the access rules always match what's in the repo.
 
 ## Routing
 

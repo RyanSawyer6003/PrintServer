@@ -88,6 +88,18 @@ DefaultPolicy default
 </Location>
 
 <Location /admin/conf>
+  # cupsd.conf is read-only over HTTP. The web interface (Server Settings,
+  # Edit Configuration File) and cupsctl all replace the file with a PUT to
+  # /admin/conf/cupsd.conf, which would overwrite the access rules rendered
+  # from .env. No account matches the name below, so every PUT is refused.
+  # This block must stay first: a <Limit> copies the rules above it, and
+  # "Require" adds to that copy rather than replacing it.
+  <Limit PUT>
+    AuthType Default
+    Require user cupsd-conf-is-read-only
+    Order allow,deny
+  </Limit>
+
   AuthType Default
   Require user @SYSTEM
   Encryption Required
