@@ -31,8 +31,12 @@ DefaultAuthType Basic
 WebInterface Yes
 
 <Policy default>
+  # Document names, user names and source computers of other people's jobs are
+  # hidden from anyone but the job's owner and admins. Without this, any client
+  # on a print subnet could list them. Usage reporting is not affected: it
+  # reads the page log, not the job list.
   JobPrivateAccess @OWNER @SYSTEM
-  JobPrivateValues none
+  JobPrivateValues default
   SubscriptionPrivateAccess @OWNER @SYSTEM
   SubscriptionPrivateValues none
 
