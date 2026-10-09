@@ -29,6 +29,44 @@ elif [ -n "${NEW_USER:-}" ]; then
     echo "=========================================================="
 fi
 
+# --- View-only account for the usage reports ---------------------------------
+# Optional. Members of the usageviewers group can sign in to /usage/ and
+# nothing else: cupsd.conf keeps /admin and every admin operation for the
+# admin group. The group always exists, because cupsd.conf names it.
+VIEW_GROUP=usageviewers
+VIEWER_USER="${USAGE_VIEWER_USER:-}"
+VIEWER_PASSWORD="${USAGE_VIEWER_PASSWORD:-}"
+
+getent group "$VIEW_GROUP" >/dev/null || groupadd "$VIEW_GROUP"
+VIEWER_OK=""
+if [ -n "$VIEWER_USER" ] || [ -n "$VIEWER_PASSWORD" ]; then
+    if [ -z "$VIEWER_USER" ] || [ -z "$VIEWER_PASSWORD" ]; then
+        echo "WARNING: set both USAGE_VIEWER_USER and USAGE_VIEWER_PASSWORD in .env for a"
+        echo "view-only login. Only one is set, so no view-only account was created."
+    elif [[ ! "$VIEWER_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+        echo "ERROR: USAGE_VIEWER_USER must be a lower-case account name (letters, digits, _ or -)" >&2
+        exit 1
+    elif [ "$VIEWER_USER" = "$ADMIN_USER" ]; then
+        echo "ERROR: USAGE_VIEWER_USER must not be the admin account ($ADMIN_USER)" >&2
+        exit 1
+    elif id "$VIEWER_USER" &>/dev/null && { [ "$(id -u "$VIEWER_USER")" -lt 1000 ] || [ "$VIEWER_USER" = nobody ]; }; then
+        echo "ERROR: USAGE_VIEWER_USER names a system account ($VIEWER_USER); choose another name" >&2
+        exit 1
+    else
+        id "$VIEWER_USER" &>/dev/null || useradd -M -s /usr/sbin/nologin "$VIEWER_USER"
+        echo "${VIEWER_USER}:${VIEWER_PASSWORD}" | chpasswd
+        VIEWER_OK=1
+        echo "View-only usage login enabled for ${VIEWER_USER}."
+    fi
+fi
+# Make the group hold exactly the configured account, so a renamed or removed
+# viewer loses access on the next start, and keep that account out of the
+# admin group whatever was done by hand.
+gpasswd -M "${VIEWER_OK:+$VIEWER_USER}" "$VIEW_GROUP" >/dev/null
+if [ -n "$VIEWER_OK" ] && id -nG "$VIEWER_USER" | tr ' ' '\n' | grep -qx lpadmin; then
+    gpasswd -d "$VIEWER_USER" lpadmin >/dev/null
+fi
+
 # --- cupsd.conf --------------------------------------------------------------
 # Render cupsd.conf from the template on every start. Site values come from .env,
 # so nothing environment-specific is committed, and repo changes to the template

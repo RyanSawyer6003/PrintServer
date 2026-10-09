@@ -123,10 +123,13 @@ DefaultPolicy default
   @ADMIN_ALLOW@
 </Location>
 
-# --- Usage reports: static pages written by the usage service. Admins only. ---
+# --- Usage reports: static pages written by the usage service, with the job
+#     log, document names and source computers. Admins, plus the view-only
+#     group. That group is not the admin group, so its members can read these
+#     pages and nothing else: /admin and every admin operation still need @SYSTEM. ---
 <Location /usage>
   AuthType Default
-  Require user @SYSTEM
+  Require user @SYSTEM @usageviewers
   Encryption Required
   Order allow,deny
   @ADMIN_ALLOW@
