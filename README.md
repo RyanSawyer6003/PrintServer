@@ -14,6 +14,10 @@ docker ps                   # STATUS should show (healthy) within ~1 minute
 
 The admin UI is at `https://<SERVICES_IP>:631/admin` and is HTTPS only. Sign in with the `CUPS_ADMIN_USER` account. Until a real certificate is installed, CUPS uses a self-signed one, so expect a browser warning.
 
+## Installing printers on clients
+
+See [docs/client-setup.md](docs/client-setup.md): finding queues in the web interface, and installing them on Windows, macOS, Linux and ChromeOS, one at a time or by script.
+
 ## Configuration
 
 All site-specific values live in `.env`. See `.env.example`. **Don't commit real values.**
