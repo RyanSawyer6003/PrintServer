@@ -14,6 +14,10 @@ services:
         gw_priority: 1
       printer_vlan:
         ipv4_address: ${PRINTER_IP:?set PRINTER_IP in .env}
+    # The container sits on both networks and must never route between them:
+    # a printer that pointed a route at it could otherwise reach the LAN.
+    sysctls:
+      net.ipv4.ip_forward: 0
     volumes:
       - cups_config:/etc/cups
       - cups_spool:/var/spool/cups
