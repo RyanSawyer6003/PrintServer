@@ -2,7 +2,9 @@ services:
   cups:
     build: .
     container_name: ${CUPS_CONTAINER_NAME:-cups}
-    hostname: ${CUPS_HOSTNAME:?set CUPS_HOSTNAME in .env}
+    # CUPS issues its self-signed certificate to this name, so it must be the
+    # full name clients print to. It defaults to CUPS_SERVER_NAME.
+    hostname: ${CUPS_HOSTNAME:-${CUPS_SERVER_NAME:?set CUPS_SERVER_NAME in .env}}
     env_file:
       - .env
     networks:
