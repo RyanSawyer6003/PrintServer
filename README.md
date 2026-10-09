@@ -28,18 +28,63 @@ See [docs/client-setup.md](docs/client-setup.md): finding queues in the web inte
 
 ## Configuration
 
-All site-specific values live in `.env`. See `.env.example`. **Don't commit real values.**
+All site-specific values live in `.env`, which is gitignored. Copy `.env.example` to `.env` and fill it in. **Don't commit real values.**
 
-| Variable | Purpose |
-|---|---|
-| `CUPS_SERVER_NAME` / `CUPS_SERVER_ALIASES` | Direct name used in printer URIs, plus any other accepted hostnames (e.g. a reverse proxy) |
-| `CUPS_PRINT_SUBNETS` | Client subnets allowed to print, browse queues, and open the staff page |
-| `CUPS_ADMIN_SUBNETS` | Subnets allowed to open `/admin` and `/usage/`. A login is always required. |
-| `CUPS_ADMIN_USER` / `CUPS_ADMIN_PASSWORD` | Admin account. The password is applied on every start. |
-| `USAGE_VIEWER_USER` / `USAGE_VIEWER_PASSWORD` | Optional view-only account for `/usage/` |
-| `STATUS_CHECK_MINUTES` | Minutes between printer checks for the staff page (default 5). See [Staff page](#staff-page) for the two optional tuning values. |
-| `SERVICES_*`, `PRINTER_*` | macvlan interfaces, subnets, gateways, and container IPs |
-| `CUPS_HOSTNAME` | Container hostname and certificate name. Defaults to `CUPS_SERVER_NAME`. |
+Every variable `.env` takes, grouped as in `.env.example`. **Required** means the stack won't start without it.
+
+| Variable | Default | What it does |
+|---|---|---|
+| **Admin account** | | |
+| `CUPS_ADMIN_USER` | `printadmin` | Account that signs in to `/admin` and `/usage/`. Created inside the container at start, as a member of the CUPS admin group. |
+| `CUPS_ADMIN_PASSWORD` | random | Password for that account, applied on every start. If blank, a random one is generated when the container is created and printed once in `docker logs`. |
+| **Containers** | | |
+| `CUPS_CONTAINER_NAME` | `cups` | Name of the CUPS container, as used in `docker exec` and `docker logs`. |
+| `USAGE_CONTAINER_NAME` | `cups-usage` | Name of the usage reporting container. |
+| `CUPS_HOSTNAME` | `CUPS_SERVER_NAME` | The container's hostname, which is the name on CUPS's self-signed certificate. Leave it unset unless it has to differ from the server name. Changing it makes CUPS issue a new certificate, which clients then have to trust again. |
+| **Service network** (clients and admins) | | |
+| `SERVICES_PARENT_IF` | Required | Host interface the service network uses: a NIC (`eth0`) or a VLAN sub-interface (`eth0.10`). See [Network layouts](#network-layouts). |
+| `SERVICES_SUBNET` | Required | The service network, as a CIDR. |
+| `SERVICES_GATEWAY` | Required | Its gateway. This is the container's default route. |
+| `SERVICES_IP` | Required | The container's address on the service network. `CUPS_SERVER_NAME` must resolve to it. |
+| **Printer network** | | |
+| `PRINTER_PARENT_IF` | Required | Host interface the printer network uses: a NIC (`eth1`) or a VLAN sub-interface (`eth0.20`). |
+| `PRINTER_SUBNET` | Required | The printer network, as a CIDR. |
+| `PRINTER_GATEWAY` | Required | Its gateway. Docker needs it to define the network; the container never uses it as its default route. |
+| `PRINTER_IP` | Required | The container's address on the printer network. Connections to the printers come from it. |
+| **Names** | | |
+| `CUPS_SERVER_NAME` | Required | The full DNS name clients print to. CUPS puts it in the printer addresses it hands out, and it is the certificate name unless `CUPS_HOSTNAME` is set. |
+| `CUPS_SERVER_ALIASES` | none | Other host names CUPS answers to, space- or comma-separated, such as a reverse proxy's name. CUPS rejects requests for a name that isn't listed. |
+| **Who can connect** | | |
+| `CUPS_PRINT_SUBNETS` | Required | Client subnets allowed to print, browse the queues, and open the staff page. Leave out any network that shouldn't print. |
+| `CUPS_ADMIN_SUBNETS` | Required | Subnets allowed to open `/admin` and `/usage/`. A login and HTTPS are always required as well. Behind a reverse proxy, set it to the proxy's address only (`<proxy IP>/32`). |
+| **Staff page** | | |
+| `STATUS_CHECK_MINUTES` | `5` | Minutes between checks of whether each printer answers on its print port. |
+| `STATUS_CHECK_TIMEOUT` | `3` | Seconds to wait for a printer to accept the connection before the check counts as failed. |
+| `STATUS_DOWN_AFTER` | `2` | Failed checks in a row before a printer shows as down. |
+| **Usage reports** | | |
+| `USAGE_VIEWER_USER` | none | Name of an optional view-only account that can sign in to `/usage/` and nothing else. Set it together with the password. |
+| `USAGE_VIEWER_PASSWORD` | none | Password for the view-only account, applied on every start. |
+| `USAGE_MONTHLY_PAGES` | `0` | Pages each person may print per month. People over it are flagged on the report; nobody is blocked. `0` means no allowance. |
+| `USAGE_TIMEZONE` | `UTC` | Time zone for month boundaries and the times shown on the pages, as an IANA name such as `America/New_York`. |
+| `CUPS_DOCROOT` | `/usr/share/cups/doc-root` | Where CUPS serves web pages from inside the container. Set it only if the container warns at startup that the reports are mounted in the wrong place; the warning gives the value. |
+| **Backups** (read by `scripts/backup.sh`) | | |
+| `RESTIC_REPOSITORY` | none | Where the encrypted snapshots go: an absolute path on the Docker host, or a restic remote such as `s3:...`. Backups don't run until it and the password are set. |
+| `RESTIC_PASSWORD` | none | Encrypts the snapshots. Keep a copy somewhere other than this server; without it the backup can't be opened. |
+| `BACKUP_KEEP_DAILY` | `14` | Nightly snapshots to keep. |
+| `BACKUP_KEEP_WEEKLY` | `8` | Weekly snapshots to keep. |
+| `BACKUP_KEEP_MONTHLY` | `12` | Monthly snapshots to keep. |
+| `BACKUP_ALLOW_SAME_DISK` | `0` | `1` allows a repository path on the same disk as the Docker volumes. The script refuses one otherwise, because that is what an unmounted backup drive looks like. |
+| `BACKUP_IMAGE` | pinned in the script | The restic container image the script runs. Set it to use a different restic version. |
+| `BACKUP_STATE_DIR` | `/var/lib/printserver-backup` | Directory on the host where the script keeps its lock and the time of the last successful run. Rarely needs changing. |
+| `AWS_*`, `B2_*`, other `RESTIC_*` | none | Storage credentials and restic options for a remote repository, under restic's own names. All are passed to restic. See [docs/backup.md](docs/backup.md). |
+
+When a change takes effect:
+
+- **Most values:** run `docker compose up -d`. Compose recreates the containers with the new values.
+- **`SERVICES_*` and `PRINTER_*`:** Docker networks that already exist don't change. Run `docker compose down`, then `docker compose up -d` (see [Changing the layout](#changing-the-layout)).
+- **Backup values:** `scripts/backup.sh` reads `.env` each time it runs. Nothing needs restarting.
+
+More detail on a group of settings: [Network layouts](#network-layouts), [Access model](#access-model), [Staff page](#staff-page), [Usage reports](#usage-reports), [Backups](#backups).
 
 Subnet lists are space- or comma-separated IPv4 CIDRs. The container won't start if a list is empty or contains a malformed entry.
 
