@@ -30,7 +30,7 @@ See [docs/client-setup.md](docs/client-setup.md): finding queues in the web inte
 
 All site-specific values live in `.env`, which is gitignored. Copy `.env.example` to `.env` and fill it in. **Don't commit real values.**
 
-Every variable `.env` takes, grouped as in `.env.example`. **Required** means the stack won't start without it.
+The variables `.env` takes, grouped as in `.env.example`. **Required** means the stack won't start without it.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -75,7 +75,6 @@ Every variable `.env` takes, grouped as in `.env.example`. **Required** means th
 | `BACKUP_KEEP_MONTHLY` | `12` | Monthly snapshots to keep. |
 | `BACKUP_ALLOW_SAME_DISK` | `0` | `1` allows a repository path on the same disk as the Docker volumes. The script refuses one otherwise, because that is what an unmounted backup drive looks like. |
 | `BACKUP_IMAGE` | pinned in the script | The restic container image the script runs. Set it to use a different restic version. |
-| `BACKUP_STATE_DIR` | `/var/lib/printserver-backup` | Directory on the host where the script keeps its lock and the time of the last successful run. Rarely needs changing. |
 | `AWS_*`, `B2_*`, other `RESTIC_*` | none | Storage credentials and restic options for a remote repository, under restic's own names. All are passed to restic. See [docs/backup.md](docs/backup.md). |
 
 When a change takes effect:
