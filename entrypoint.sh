@@ -92,19 +92,49 @@ if ! /usr/sbin/cupsd -t -c /etc/cups/cupsd.conf; then
     exit 1
 fi
 
-# --- Usage reports -----------------------------------------------------------
-# CUPS serves the usage reports as static files from <DocumentRoot>/usage, where
-# docker-compose mounts them. Warn if they are mounted somewhere CUPS won't look.
+# --- Usage reports and staff page ----------------------------------------------
+# CUPS serves the usage reports and the staff page as static files from
+# <DocumentRoot>/usage and <DocumentRoot>/status, where docker-compose mounts
+# them. Warn if they are mounted somewhere CUPS won't look.
 CUPS_FILES_CONF=/etc/cups/cups-files.conf
 DOCROOT=$(sed -n 's/^DocumentRoot[[:space:]]\{1,\}\(\/[^[:space:]]*\).*/\1/p' "$CUPS_FILES_CONF" 2>/dev/null | tail -n 1)
 if [ -z "$DOCROOT" ]; then
     # Not set: the commented-out line in the stock file shows the built-in default.
     DOCROOT=$(sed -n 's/^#[[:space:]]*DocumentRoot[[:space:]]\{1,\}\(\/[^[:space:]]*\).*/\1/p' "$CUPS_FILES_CONF" 2>/dev/null | tail -n 1)
 fi
-if [ -n "$DOCROOT" ] && [ ! -d "$DOCROOT/usage" ]; then
-    echo "WARNING: the usage reports are not mounted where CUPS serves web pages,"
-    echo "so /usage/ will return Not Found. Add this line to .env and run"
-    echo "'docker compose up -d':  CUPS_DOCROOT=$DOCROOT"
+if [ -n "$DOCROOT" ] && { [ ! -d "$DOCROOT/usage" ] || [ ! -d "$DOCROOT/status" ]; }; then
+    echo "WARNING: the usage reports and staff page are not mounted where CUPS serves"
+    echo "web pages, so /usage/ and /status/ will return Not Found. Add this line to"
+    echo ".env and run 'docker compose up -d':  CUPS_DOCROOT=$DOCROOT"
 fi
+
+# --- Printer status check ------------------------------------------------------
+# Every STATUS_CHECK_MINUTES, test whether each queue's printer accepts a
+# connection on its print port, and write the result for the usage service to
+# put on the staff page. It runs here because this container is the one on the
+# printer network. It runs as an unprivileged user, and is restarted if it exits.
+for name in STATUS_CHECK_MINUTES STATUS_CHECK_TIMEOUT STATUS_DOWN_AFTER; do
+    if [[ ! "${!name:-1}" =~ ^[1-9][0-9]{0,4}$ ]]; then
+        echo "ERROR: $name must be a whole number of 1 or more, got '${!name}'" >&2
+        exit 1
+    fi
+done
+STATUS_DIR=/var/lib/printserver/status
+mkdir -p "$STATUS_DIR"
+chown nobody:nogroup "$STATUS_DIR"
+chmod 755 "$STATUS_DIR"
+(
+    sleep 5    # let cupsd, started below, come up before the first check
+    # A clean environment: the check has no use for the passwords in this one.
+    while true; do
+        env -i PATH="$PATH" PYTHONUNBUFFERED=1 \
+            STATUS_CHECK_MINUTES="${STATUS_CHECK_MINUTES:-}" \
+            STATUS_CHECK_TIMEOUT="${STATUS_CHECK_TIMEOUT:-}" \
+            STATUS_DOWN_AFTER="${STATUS_DOWN_AFTER:-}" \
+            setpriv --reuid=nobody --regid=nogroup --clear-groups \
+            python3 /opt/printserver/statuscheck.py run || true
+        sleep 15
+    done
+) &
 
 exec /usr/sbin/cupsd -f

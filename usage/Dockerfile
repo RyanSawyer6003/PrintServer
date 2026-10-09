@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY usage.py /app/usage.py
 RUN chmod 755 /app/usage.py \
     && ln -s /app/usage.py /usr/local/bin/usage \
-    && mkdir -p /data /reports
+    && mkdir -p /data /reports /staff /status-data
 
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 
