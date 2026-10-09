@@ -30,6 +30,8 @@ Open `http://<server>:631/printers/` in a browser on a client subnet. No login i
 
 - The **Printers** tab lists every queue with its description, location, model and status. Click a queue to open its page; that page's address is the queue's install URL.
 - The **Jobs** tab shows queued and completed jobs.
+- The **Status** tab opens the staff page (`/status/`): every queue with its printer up or down, the queue state, and page totals. No login is needed.
+- The **Usage** tab opens the usage reports (`/usage/`). It needs HTTPS and the admin or view-only login.
 - On a queue's page, **Maintenance → Print Test Page** sends a test page. It may ask for the admin login.
 - **Administration** (`https://<server>:631/admin`) needs the admin login and HTTPS. With the default self-signed certificate, expect a browser warning.
 
