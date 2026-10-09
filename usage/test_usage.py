@@ -3,9 +3,11 @@
 All names, hosts and printers here are made up.
 """
 
+import json
 import os
 import stat
 import tempfile
+import time
 import unittest
 from zoneinfo import ZoneInfo
 
@@ -153,6 +155,158 @@ class StoreAndReportTests(unittest.TestCase):
         usage.render(self.db, UTC, 500, 0, out_dir=self.out)
         with open(os.path.join(self.out, "index.html"), encoding="utf-8") as handle:
             self.assertIn("No print jobs recorded this month.", handle.read())
+
+
+def status_queue(name, **extra):
+    return dict({"name": name, "description": "", "location": "", "state": "idle", "accepting": True,
+                 "jobs": 0, "check": "up", "since": 1000}, **extra)
+
+
+class StaffPageTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.logs = os.path.join(self.tmp.name, "logs")
+        self.out = os.path.join(self.tmp.name, "staff")
+        os.makedirs(self.logs)
+        self.db = usage.open_db(os.path.join(self.tmp.name, "usage.db"))
+        self.addCleanup(self.db.close)
+
+    def write_log(self, lines):
+        with open(os.path.join(self.logs, "page_log"), "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+        usage.ingest(self.db, UTC, self.logs)
+
+    def write_status(self, document):
+        path = os.path.join(self.tmp.name, "status.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(document if isinstance(document, str) else json.dumps(document))
+        return path
+
+    def page(self, status, name="index.html"):
+        usage.render_staff(self.db, UTC, status, out_dir=self.out)
+        with open(os.path.join(self.out, name), encoding="utf-8") as handle:
+            return handle.read()
+
+    def this_month(self, day_time="02 15:00:00"):
+        stamp = time.strftime("%b/%Y", time.gmtime())
+        day, clock = day_time.split()
+        return f"[{day}/{stamp}:{clock} +0000]"
+
+    def test_printers_are_listed_by_location_then_description(self):
+        queues = {
+            "20417": {"location": "North, room 9", "description": "Laser"},
+            "9031": {"location": "North, room 10", "description": "Laser"},
+            "20500": {"location": "", "description": "Unplaced"},
+            "20007": {"location": "annex, office", "description": "Copier"},
+            "9500": {"location": "Annex, office", "description": "Colour laser"},
+        }
+        self.assertEqual(usage.by_location(queues), ["9500", "20007", "20417", "9031", "20500"])
+
+        status = {"checked_at": int(time.time()), "interval": 300, "queues": [
+            status_queue(name, **info) for name, info in queues.items()]}
+        page = self.page(status)
+        rows = [page.index(f"<td class=\"id\">{name}</td>") for name in usage.by_location(queues)]
+        self.assertEqual(rows, sorted(rows))
+        self.assertIn("No location set", page)
+
+    def test_status_file_is_checked_before_use(self):
+        self.assertIsNone(usage.load_status(os.path.join(self.tmp.name, "missing.json")))
+        self.assertIsNone(usage.load_status(self.write_status("{not json")))
+        self.assertIsNone(usage.load_status(self.write_status({"queues": []})))
+        status = usage.load_status(self.write_status({
+            "checked_at": 2000, "interval": "soon",
+            "queues": ["junk", {"name": ""}, {"name": "north-a", "check": "exploded", "state": 7,
+                                              "jobs": -3, "since": "then", "accepting": False}]}))
+        self.assertEqual(status["interval"], 300)
+        self.assertEqual(status["queues"], [{
+            "name": "north-a", "description": "", "location": "", "state": "idle",
+            "accepting": False, "jobs": 0, "check": "unchecked", "since": None}])
+
+    def test_staff_page_never_shows_people_documents_or_computers(self):
+        self.write_log([
+            f"20417|AzureAD\\JaneDoe|1|{self.this_month()}|total|40|10.30.3.139|one-sided|color|SecretTitle.docx",
+            f"9031|AzureAD\\SamLee|2|{self.this_month()}|total|60|laptop-77|one-sided|color|Payroll.xlsx",
+            f"20417|AzureAD\\SamLee|3|{self.this_month()}|total|5|laptop-77|one-sided|color|Notes.docx",
+            f"8000|AzureAD\\SamLee|4|{self.this_month()}|total|2|laptop-77|one-sided|color|Old.docx",
+        ])
+        status = {"checked_at": int(time.time()), "interval": 300, "queues": [
+            status_queue("20417", description="Colour laser", location="North, library"),
+            status_queue("9031", description="Copier", location="South, office")]}
+        page = self.page(status)
+        for hidden in ("JaneDoe", "SamLee", "SecretTitle", "Payroll", "Notes.docx", "10.30.3.139",
+                       "laptop-77", "AzureAD", ".csv", "llowance", "By person"):
+            self.assertNotIn(hidden, page)
+        self.assertIn("All 2 printers are up", page)
+        # Totals per printer, busiest first, with where each printer is.
+        self.assertIn("<tr><td>South, office</td><td>Copier</td><td>9031</td>"
+                      "<td class=\"num\">60</td><td class=\"num\">1</td></tr>", page)
+        self.assertIn("<tr><td>North, library</td><td>Colour laser</td><td>20417</td>"
+                      "<td class=\"num\">45</td><td class=\"num\">2</td></tr>", page)
+        # A printer that is no longer on the server still has its totals.
+        self.assertIn("<tr><td></td><td></td><td>8000</td><td class=\"num\">2</td>", page)
+        self.assertLess(page.index("<td>9031</td>"), page.index("<td>20417</td>"))
+
+    def test_headline_counts_down_printers_and_leaves_out_unchecked_ones(self):
+        now = int(time.time())
+        status = {"checked_at": now, "interval": 300, "queues": [
+            status_queue("north-a"),
+            status_queue("north-b", check="down", since=now - 600),
+            status_queue("south-c", check="unchecked", since=None, state="stopped", accepting=False),
+        ]}
+        page = self.page(status)
+        self.assertIn("1 of 2 printers is down", page)
+        self.assertIn("Down: north-b.", page)
+        self.assertNotIn("<h3", page)
+        self.assertIn("1 printer can't be checked", page)
+        self.assertIn("Paused</span>, not accepting jobs", page)
+        self.assertNotIn("The checks have stopped", page)
+
+    def test_a_printer_still_being_checked_is_not_counted_as_up(self):
+        status = {"checked_at": int(time.time()), "interval": 300, "queues": [
+            status_queue("north-a"), status_queue("north-b", check="unknown", since=None)]}
+        page = self.page(status)
+        self.assertIn("1 of 2 printers is up", page)
+        self.assertIn("Still checking: north-b.", page)
+        self.assertNotIn("All 2 printers are up", page)
+
+    def test_down_printers_are_named_with_their_location(self):
+        now = int(time.time())
+        status = {"checked_at": now, "interval": 300, "queues": [
+            status_queue("20417", check="down", since=now - 600, location="North, library"),
+            status_queue("9031", check="down", since=now - 600, description="Copier"),
+            status_queue("9500")]}
+        self.assertIn("Down: 20417 (North, library), 9031 (Copier).", self.page(status))
+
+    def test_missing_and_stale_status_are_said_plainly(self):
+        self.assertIn("Printer status isn't available yet", self.page(None))
+        stale = {"checked_at": int(time.time()) - 3600, "interval": 300, "queues": [status_queue("a")]}
+        self.assertIn("The checks have stopped", self.page(stale))
+        self.assertIn("No printers are set up yet",
+                      self.page({"checked_at": int(time.time()), "interval": 300, "queues": []}))
+
+    def test_queue_text_is_escaped(self):
+        status = {"checked_at": int(time.time()), "interval": 300, "queues": [
+            status_queue("north-a", description="<img src=x>", location="Room \"1\" & 2")]}
+        page = self.page(status)
+        self.assertNotIn("<img", page)
+        self.assertIn("<td class=\"loc\">Room &quot;1&quot; &amp; 2</td>"
+                      "<td class=\"desc\">&lt;img src=x&gt;</td>", page)
+
+    def test_earlier_months_get_their_own_page_without_status(self):
+        self.write_log(["north-lab|jdoe|1|[02/Jan/2020:15:00:00 +0000]|total|5|h|-|-|Doc"])
+        status = {"checked_at": int(time.time()), "interval": 300, "queues": [status_queue("north-lab")]}
+        index = self.page(status)
+        self.assertIn("href=\"/status/2020-01.html\"", index)
+        with open(os.path.join(self.out, "2020-01.html"), encoding="utf-8") as handle:
+            january = handle.read()
+        self.assertIn("Pages printed in January 2020", january)
+        self.assertNotIn("jdoe", january)
+        self.assertIn("<td>north-lab</td><td class=\"num\">5</td>", january)
+        self.assertNotIn("printers are up", january)
+        self.assertNotIn("http-equiv=\"refresh\"", january)
+        for name in os.listdir(self.out):
+            self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.out, name)).st_mode), 0o644, name)
 
 
 if __name__ == "__main__":

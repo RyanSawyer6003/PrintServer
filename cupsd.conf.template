@@ -31,8 +31,12 @@ DefaultAuthType Basic
 WebInterface Yes
 
 <Policy default>
+  # Document names, user names and source computers of other people's jobs are
+  # hidden from anyone but the job's owner and admins. Without this, any client
+  # on a print subnet could list them. Usage reporting is not affected: it
+  # reads the page log, not the job list.
   JobPrivateAccess @OWNER @SYSTEM
-  JobPrivateValues none
+  JobPrivateValues default
   SubscriptionPrivateAccess @OWNER @SYSTEM
   SubscriptionPrivateValues none
 
@@ -119,12 +123,25 @@ DefaultPolicy default
   @ADMIN_ALLOW@
 </Location>
 
-# --- Usage reports: static pages written by the usage service. Admins only. ---
+# --- Usage reports: static pages written by the usage service, with the job
+#     log, document names and source computers. Admins, plus the view-only
+#     group. That group is not the admin group, so its members can read these
+#     pages and nothing else: /admin and every admin operation still need @SYSTEM. ---
 <Location /usage>
   AuthType Default
-  Require user @SYSTEM
+  Require user @SYSTEM @usageviewers
   Encryption Required
   Order allow,deny
+  @ADMIN_ALLOW@
+</Location>
+
+# --- Staff page: printer status and page totals per printer, written by the
+#     usage service. No login. Open to the same subnets that can print, plus the
+#     admin sources (a reverse proxy, for example). It holds no people, document
+#     names, computer addresses or job log. ---
+<Location /status>
+  Order allow,deny
+  @PRINT_ALLOW@
   @ADMIN_ALLOW@
 </Location>
 

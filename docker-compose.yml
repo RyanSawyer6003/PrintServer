@@ -2,7 +2,9 @@ services:
   cups:
     build: .
     container_name: ${CUPS_CONTAINER_NAME:-cups}
-    hostname: ${CUPS_HOSTNAME:?set CUPS_HOSTNAME in .env}
+    # CUPS issues its self-signed certificate to this name, so it must be the
+    # full name clients print to. It defaults to CUPS_SERVER_NAME.
+    hostname: ${CUPS_HOSTNAME:-${CUPS_SERVER_NAME:?set CUPS_SERVER_NAME in .env}}
     env_file:
       - .env
     networks:
@@ -14,12 +16,20 @@ services:
         gw_priority: 1
       printer_vlan:
         ipv4_address: ${PRINTER_IP:?set PRINTER_IP in .env}
+    # The container sits on both networks and must never route between them:
+    # a printer that pointed a route at it could otherwise reach the LAN.
+    sysctls:
+      net.ipv4.ip_forward: 0
     volumes:
       - cups_config:/etc/cups
       - cups_spool:/var/spool/cups
       - cups_logs:/var/log/cups
       # Usage reports, written by the usage service and served by CUPS at /usage/.
       - usage_reports:${CUPS_DOCROOT:-/usr/share/cups/doc-root}/usage:ro
+      # Staff page, written by the usage service and served by CUPS at /status/.
+      - status_pages:${CUPS_DOCROOT:-/usr/share/cups/doc-root}/status:ro
+      # Printer up/down results, written here by the status check.
+      - status_data:/var/lib/printserver/status
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "lpstat -r | grep -qx 'scheduler is running'"]
@@ -28,8 +38,9 @@ services:
       retries: 3
       start_period: 20s
 
-  # Reads the CUPS page log and writes the usage reports. Report only: it has
-  # no network access and cannot see or change print jobs.
+  # Reads the CUPS page log and the printer status results, and writes the usage
+  # reports and the staff page. Report only: it has no network access and cannot
+  # see or change print jobs.
   usage:
     build: ./usage
     container_name: ${USAGE_CONTAINER_NAME:-cups-usage}
@@ -46,6 +57,8 @@ services:
       - cups_logs:/var/log/cups:ro
       - usage_data:/data
       - usage_reports:/reports
+      - status_pages:/staff
+      - status_data:/status-data:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "test $$(( $$(date +%s) - $$(cat /data/heartbeat) )) -lt 300"]
@@ -78,3 +91,5 @@ volumes:
   cups_logs:
   usage_data:
   usage_reports:
+  status_pages:
+  status_data:
