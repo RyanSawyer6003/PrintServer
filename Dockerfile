@@ -14,6 +14,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 
+# Add "Status" and "Usage" to the navigation bar of the CUPS web pages. The
+# build stops here if a CUPS update changes the bar, so the links can't
+# silently disappear.
+COPY nav-links.sh /opt/printserver/nav-links.sh
+RUN bash /opt/printserver/nav-links.sh
+
 # Printer up/down check, started by the entrypoint. Standard library only.
 COPY status/statuscheck.py /opt/printserver/statuscheck.py
 RUN chmod 755 /opt/printserver/statuscheck.py \
