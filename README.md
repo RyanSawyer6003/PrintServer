@@ -37,7 +37,7 @@ All site-specific values live in `.env`. See `.env.example`. **Don't commit real
 | `CUPS_ADMIN_SUBNETS` | Subnets allowed to open `/admin` and `/usage/`. A login is always required. |
 | `CUPS_ADMIN_USER` / `CUPS_ADMIN_PASSWORD` | Admin account. The password is applied on every start. |
 | `USAGE_VIEWER_USER` / `USAGE_VIEWER_PASSWORD` | Optional view-only account for `/usage/` |
-| `STATUS_CHECK_MINUTES` | How often printers are checked for the staff page (default 5) |
+| `STATUS_CHECK_MINUTES` | Minutes between printer checks for the staff page (default 5). See [Staff page](#staff-page) for the two optional tuning values. |
 | `SERVICES_*`, `PRINTER_*` | macvlan interfaces, subnets, gateways, and container IPs |
 | `CUPS_HOSTNAME` | Container hostname and certificate name. Defaults to `CUPS_SERVER_NAME`. |
 
@@ -136,11 +136,29 @@ If `SERVICES_IP` changed, update the DNS record for `CUPS_SERVER_NAME`, any fire
 
 It shows nothing about people. Totals per person, the allowance, and the job log are in the usage reports, behind the login.
 
-**Up** means the printer accepted a TCP connection on the port its queue prints to (9100, 631 or 515, read from the queue's address). It doesn't show paper, toner or jams. The check runs inside the CUPS container every `STATUS_CHECK_MINUTES`. A printer is reported down after two failed checks in a row, so one missed check doesn't flag it. A queue with no network address (a class, or a USB or discovered queue) shows as "Not checked".
+**Up** means the printer accepted a TCP connection on the port its queue prints to (9100, 631 or 515, read from the queue's address). It doesn't show paper, toner or jams. The check runs inside the CUPS container every `STATUS_CHECK_MINUTES`. By default a printer is reported down after two failed checks in a row, so one missed check doesn't flag it. A queue with no network address (a class, or a USB or discovered queue) shows as "Not checked".
 
 Printer addresses are never written to the page or to the file the check produces.
 
 The page identifies printers by the **description and location** set on each queue, so set both (`lpadmin -p <queue> -D "<description>" -L "<location>"`). That matters most when queue names are codes such as asset numbers. Queues with no location are listed last.
+
+Settings in `.env`. All three are optional whole numbers of 1 or more; the container won't start on anything else.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `STATUS_CHECK_MINUTES` | `5` | Minutes between checks |
+| `STATUS_CHECK_TIMEOUT` | `3` | Seconds to wait for a printer to accept the connection before the check counts as failed |
+| `STATUS_DOWN_AFTER` | `2` | Failed checks in a row before a printer shows as down. `1` flags it on the first miss. |
+
+A printer that stops answering shows as down after `STATUS_DOWN_AFTER` checks, so within about `STATUS_CHECK_MINUTES` × `STATUS_DOWN_AFTER` minutes (10 with the defaults). "Down since" is the time of the first failed check. A printer that answers again shows as up after one check.
+
+After changing a value, run `docker compose up -d`. The startup log confirms what is in effect:
+
+```bash
+docker compose logs cups | grep "printer status check started"
+```
+
+The page itself is rewritten every minute and reloads in the browser every five minutes; neither is a setting.
 
 Run a check by hand and print the result:
 
