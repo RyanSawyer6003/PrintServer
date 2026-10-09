@@ -1,6 +1,6 @@
 # PrintServer
 
-Dockerized CUPS print server. The container has two macvlan network legs: one facing clients and admins, and one facing the printer network.
+Dockerized CUPS print server. The container has two macvlan network legs: one facing clients and admins, and one facing the printer network. They can be two NICs or two VLANs on one NIC (see [Network layouts](#network-layouts)).
 
 ## Deploy
 
@@ -28,11 +28,81 @@ All site-specific values live in `.env`. See `.env.example`. **Don't commit real
 | `CUPS_PRINT_SUBNETS` | Client subnets allowed to print and browse queues |
 | `CUPS_ADMIN_SUBNETS` | Subnets allowed to open `/admin`. A login is always required. |
 | `CUPS_ADMIN_USER` / `CUPS_ADMIN_PASSWORD` | Admin account. The password is applied on every start. |
-| `SERVICES_*`, `PRINTER_*`, `CUPS_HOSTNAME` | macvlan interfaces, subnets, gateways, and container IPs |
+| `SERVICES_*`, `PRINTER_*`, `CUPS_HOSTNAME` | macvlan interfaces, subnets, gateways, and container IPs. See [Network layouts](#network-layouts). |
 
 Subnet lists are space- or comma-separated IPv4 CIDRs. The container won't start if a list is empty or contains a malformed entry.
 
 `cupsd.conf` is rendered from `cupsd.conf.template` on every start and checked with `cupsd -t` before the scheduler launches. Template changes take effect on restart, even though `/etc/cups` is a persistent volume.
+
+## Network layouts
+
+The container needs two networks:
+
+- **Service network:** where clients and admins reach CUPS. It carries the container's default route. Set with `SERVICES_*`.
+- **Printer network:** where the printers are. Set with `PRINTER_*`.
+
+How those two networks reach the Docker host is set in `.env` alone. `docker-compose.yml` is the same for every layout.
+
+### Host connection
+
+| Layout | Switch port(s) | `SERVICES_PARENT_IF` | `PRINTER_PARENT_IF` |
+|---|---|---|---|
+| **A. Two NICs** | Each NIC is an untagged (access) port on its own network | `eth0` | `eth1` |
+| **B. One trunked NIC** | Both VLANs arrive tagged | `eth0.10` | `eth0.20` |
+| **C. One NIC, mixed** | Service network untagged (native), printer VLAN tagged | `eth0` | `eth0.20` |
+
+The examples use VLAN 10 for the service network and VLAN 20 for the printer network. `.env.example` shows layout A.
+
+- When a parent is written as `<nic>.<VLAN ID>`, Docker creates the tagged sub-interface itself when it creates the network. Nothing is needed in the host's own network configuration.
+- A VLAN that is native (untagged) on the switch port can't also be used as a tagged sub-interface. In layout B, neither VLAN may be the port's native VLAN.
+- If the host's own management address is untagged on the same NIC, the port's native VLAN must keep carrying it.
+- **If the Docker host is a VM:** each container leg has its own MAC address, so the hypervisor must allow more than one MAC on the virtual NIC (VMware: promiscuous mode and forged transmits on the port group; Hyper-V: MAC address spoofing). For layouts B and C, the virtual NIC must also pass tagged frames.
+
+### Where the service network sits
+
+| Option | Effect |
+|---|---|
+| **A dedicated server VLAN** | Every client reaches the server through the gateway, so one firewall rule controls all printing. |
+| **A client subnet** | Clients on that subnet reach the server directly, without passing the firewall. Other client subnets are routed to it. |
+
+Either way, `SERVICES_SUBNET` and `SERVICES_GATEWAY` describe the network the service leg is on, and `SERVICES_IP` is a free address in it.
+
+### What the network must provide
+
+- A route from every client subnet to `SERVICES_SUBNET`, with 631/tcp allowed to `SERVICES_IP`. With several sites, this applies across the links between them.
+- A DNS record for `CUPS_SERVER_NAME` that resolves to `SERVICES_IP` from every client subnet.
+- No route for clients into the printer network, and none from the printers back to the LAN. The printers only need to be reached from `PRINTER_IP`.
+
+Don't add the printer subnet to `CUPS_PRINT_SUBNETS` or `CUPS_ADMIN_SUBNETS`. CUPS connects out to the printers; those lists only control who can connect in.
+
+Printers on a subnet the container isn't attached to (another building, for example) are reached through the default route, so that traffic leaves from `SERVICES_IP`. Allow it on your firewall. This path has not been tested.
+
+### Changing the layout
+
+Editing `.env` doesn't change Docker networks that already exist. Recreate them. Leave out `-v` so the volumes (queues, usage history) are kept:
+
+```bash
+docker compose down
+docker compose up -d
+```
+
+Then check on the Docker host:
+
+```bash
+# Layouts B and C: each sub-interface exists and shows its VLAN ID
+ip -d link show <SERVICES_PARENT_IF>
+ip -d link show <PRINTER_PARENT_IF>
+
+# The networks picked up the new parent, subnet, and gateway
+docker network inspect <project>_services_vlan \
+  --format '{{.Options.parent}} {{range .IPAM.Config}}{{.Subnet}} {{.Gateway}}{{end}}'
+
+# Container addresses and default route ("default via" must be SERVICES_GATEWAY)
+docker exec <container> ip -br addr
+docker exec <container> ip route
+```
+
+If `SERVICES_IP` changed, update the DNS record for `CUPS_SERVER_NAME`, any firewall rules that name the old address, and a reverse proxy that forwards to it by IP. Clients that print to `CUPS_SERVER_NAME` need no change.
 
 ## Access model
 
