@@ -5,8 +5,8 @@ Reads the CUPS page_log, keeps one row per print job in SQLite, and writes
 static pages for CUPS to serve:
 
   /usage/   the full report with the job log and CSV downloads (login required)
-  /status/  the staff page: printer status and page totals, with no document
-            names, computer addresses or job log (no login)
+  /status/  the staff page: printer status and page totals per printer, with
+            no people, document names, computer addresses or job log (no login)
 
 Report only: this never blocks or changes a print job. It has no network
 access and only reads the log files and the printer status file.
@@ -449,19 +449,19 @@ def render(db, zone, default_allowance, unreadable, only=None, out_dir=None):
 
 # --------------------------------------------------------------- staff page
 #
-# Served at /status/ to every print subnet without a login, so it holds
-# totals only. Document names, computer addresses and the job log stay in the
-# report above.
+# Served at /status/ to every print subnet without a login, so it holds printer
+# status and per-printer totals only. Who printed what, document names,
+# computer addresses and the job log stay in the report above.
 
 STAFF_CSS = """
 :root { color-scheme: light dark; --ink:#14181f; --muted:#5a6472; --bg:#f5f6f8; --panel:#ffffff;
   --line:#dde1e6; --link:#1b5aa0; --up:#177245; --down:#b3261e; --downbg:#fbeceb; --warn:#8a5a00;
-  --idle:#8b95a1; --bar:#1b5aa0;
+  --idle:#8b95a1;
   --sign: Bahnschrift, "DIN Alternate", "Roboto Condensed", "Franklin Gothic Medium", "Arial Narrow", sans-serif;
   --text: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", sans-serif; }
 @media (prefers-color-scheme: dark) { :root { --ink:#e8ebef; --muted:#9aa4b1; --bg:#111418;
   --panel:#191d23; --line:#2b323b; --link:#7fb5f2; --up:#4fc48c; --down:#ff8f85; --downbg:#33191a;
-  --warn:#e2b04a; --idle:#6f7a87; --bar:#7fb5f2; } }
+  --warn:#e2b04a; --idle:#6f7a87; } }
 * { box-sizing: border-box; }
 body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 var(--text); }
 a { color:var(--link); }
@@ -473,9 +473,7 @@ a:focus-visible { outline:2px solid var(--link); outline-offset:2px; border-radi
 main { max-width:1040px; margin:0 auto; padding:0 16px 48px; }
 h1 { font:600 clamp(28px, 5vw, 44px)/1.1 var(--sign); margin:28px 0 8px; letter-spacing:-.005em;
   display:flex; align-items:baseline; gap:.4em; }
-h2 { font:600 22px/1.2 var(--sign); margin:44px 0 4px; }
-h3 { font:600 16px/1.3 var(--sign); margin:24px 0 8px; display:flex; gap:10px; align-items:baseline; }
-h3 span { font:400 13px/1.3 var(--text); color:var(--muted); }
+h2 { font:600 22px/1.2 var(--sign); margin:44px 0 8px; }
 p { margin:0 0 8px; max-width:72ch; }
 .note { color:var(--muted); }
 .note.after { margin-top:10px; }
@@ -488,31 +486,26 @@ p { margin:0 0 8px; max-width:72ch; }
 .lamp.unchecked { background:transparent; box-shadow:inset 0 0 0 2px var(--idle); }
 h1 .lamp { transform:translateY(-.06em); }
 .scroll { overflow-x:auto; background:var(--panel); border:1px solid var(--line); border-radius:6px; }
+p + .scroll { margin-top:14px; }
 table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
 th, td { text-align:left; padding:9px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
 tr:last-child td { border-bottom:0; }
-table.board { table-layout:fixed; min-width:600px; }
+table.board { margin-top:0; min-width:760px; }
 table.board td { overflow-wrap:anywhere; }
 th { font-size:13px; font-weight:600; color:var(--muted); white-space:nowrap; }
 td.num, th.num { text-align:right; white-space:nowrap; }
-td.name b { font-weight:600; }
-td.name span { display:block; color:var(--muted); font-size:13px; }
+td.loc { font-weight:600; }
+td.none { color:var(--muted); font-weight:400; }
 td.state { white-space:nowrap; }
 td.state .lamp { margin-right:8px; }
 td.state small { display:block; color:var(--muted); font-size:13px; margin-left:calc(.62em + 8px); }
 tr.down td { background:var(--downbg); }
 tr.down td:first-child { box-shadow:inset 3px 0 0 var(--down); }
-.is-down, .over { color:var(--down); font-weight:600; }
+.is-down { color:var(--down); font-weight:600; }
 .attn { color:var(--warn); font-weight:600; }
-.meter { display:inline-block; width:96px; height:8px; background:var(--line); border-radius:4px;
-  vertical-align:middle; margin-right:10px; overflow:hidden; }
-.meter i { display:block; height:100%; background:var(--bar); }
-tr.over-row .meter i { background:var(--down); }
-td.used { white-space:nowrap; }
 .months { display:flex; flex-wrap:wrap; gap:4px 16px; margin:8px 0 16px; }
 .months span { color:var(--muted); }
 .months a.here { color:var(--ink); font-weight:600; text-decoration:none; }
-.pair { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:0 24px; }
 .empty { color:var(--muted); padding:14px; }
 footer { margin-top:40px; color:var(--muted); font-size:13px; }
 footer p { max-width:80ch; }
@@ -520,15 +513,23 @@ footer p { max-width:80ch; }
   table.board { min-width:0; display:block; }
   table.board colgroup, table.board thead { display:none; }
   table.board tbody { display:block; }
-  table.board tr { display:grid; grid-template-columns:1fr auto; border-bottom:1px solid var(--line); }
+  table.board tr { display:grid; grid-template-columns:1fr auto; border-bottom:1px solid var(--line);
+    grid-template-areas:"loc state" "desc state" "id id" "queue jobs"; padding:8px 0; }
   table.board tr:last-child { border-bottom:0; }
-  table.board td { border:0; padding:9px 14px 0; }
-  table.board td.queue, table.board td.num { padding:2px 14px 10px; font-size:13px; color:var(--muted); }
+  table.board td { border:0; padding:1px 14px; }
+  table.board td.loc { grid-area:loc; }
+  table.board td.state { grid-area:state; }
+  table.board td.desc { grid-area:desc; }
+  table.board td.id { grid-area:id; }
+  table.board td.queue { grid-area:queue; }
+  table.board td.num { grid-area:jobs; }
+  table.board td.id, table.board td.queue, table.board td.num { font-size:13px; color:var(--muted); }
+  table.board td.id::before { content:"Printer name: "; }
   table.board td.queue::before { content:"Queue: "; }
   table.board td.num::after { content:" waiting"; }
   tr.down td:first-child { box-shadow:none; }
-  table.board tr.down { box-shadow:inset 3px 0 0 var(--down); }
-  .meter { width:48px; margin-right:6px; }
+  table.board tr.down { border-left:3px solid var(--down); background:var(--downbg); }
+  table.board tr.down td { background:transparent; }
   th, td { padding-left:10px; padding-right:10px; }
 }
 """
@@ -540,26 +541,20 @@ TO_HTTPS = ("if(location.protocol=='http:'){location.href='https://'+location.ho
 
 CHECKS = ("up", "down", "unknown", "unchecked")
 QUEUE_STATES = ("idle", "printing", "stopped")
-OTHER_BUILDING = "Other"
 
 
-def building_of(printer):
-    """'north-library' -> 'north': the part of a queue name before the first hyphen or underscore."""
-    m = re.match(r"^([^-_]+)[-_].", printer)
-    return m.group(1) if m else ""
+def natural(text):
+    """Sort key that puts 'p9' before 'p10' and ignores case."""
+    return [int(part) if part.isdigit() else part.casefold() for part in re.split(r"(\d+)", text)]
 
 
-def group_by_building(names):
-    """Returns [(heading, [name, ...])]. One group with an empty heading if the names don't split."""
-    groups, titles = {}, {}
-    for name in names:
-        key = building_of(name).casefold()
-        titles.setdefault(key, building_of(name))
-        groups.setdefault(key, []).append(name)
-    if len(groups) < 2:
-        return [("", sorted(names, key=str.casefold))]
-    order = sorted(groups, key=lambda k: (k == "", k))
-    return [(titles[k] or OTHER_BUILDING, sorted(groups[k], key=str.casefold)) for k in order]
+def by_location(queues):
+    """Queue names in the order people look for a printer: by location, then description.
+
+    Queues with no location come last.
+    """
+    return sorted(queues, key=lambda n: (not queues[n]["location"], natural(queues[n]["location"]),
+                                         natural(queues[n]["description"]), natural(n)))
 
 
 def load_status(path=None):
@@ -618,7 +613,7 @@ def staff_head(title, refresh=None):
 
 
 def staff_status_section(status, zone, now):
-    """The printer board: a one-line answer, then every queue, grouped by building."""
+    """The printer board: a one-line answer, then every queue in one list."""
     def local(ts, fmt="%b %-d, %-I:%M %p"):
         return datetime.fromtimestamp(ts, zone).strftime(fmt)
 
@@ -628,10 +623,16 @@ def staff_status_section(status, zone, now):
                 " This page updates by itself.</p>"]
 
     queues = {q["name"]: q for q in status["queues"]}
-    checked = [q for q in queues.values() if q["check"] != "unchecked"]
-    down = sorted((q["name"] for q in checked if q["check"] == "down"), key=str.casefold)
-    pending = sorted((q["name"] for q in checked if q["check"] == "unknown"), key=str.casefold)
+    order = by_location(queues)
+    checked = [n for n in order if queues[n]["check"] != "unchecked"]
+    down = [n for n in checked if queues[n]["check"] == "down"]
+    pending = [n for n in checked if queues[n]["check"] == "unknown"]
     unchecked = len(queues) - len(checked)
+
+    def named(name):
+        """'20417 (North building, library)': the queue name with where the printer is."""
+        where = queues[name]["location"] or queues[name]["description"]
+        return f"{name} ({where})" if where and where != name else name
 
     p = []
     if not queues:
@@ -656,9 +657,9 @@ def staff_status_section(status, zone, now):
     every = "every minute" if minutes == 1 else f"every {minutes} minutes"
     p.append(f"<p class=\"note\">Checked {esc(local(status['checked_at']))}. The server checks {every}.</p>")
     if down:
-        p.append(f"<p>Down: {esc(', '.join(down))}.</p>")
+        p.append(f"<p>Down: {esc(', '.join(named(n) for n in down))}.</p>")
     if pending:
-        p.append(f"<p>Still checking: {esc(', '.join(pending))}.</p>")
+        p.append(f"<p>Still checking: {esc(', '.join(named(n) for n in pending))}.</p>")
     if now - status["checked_at"] > max(3 * status["interval"], status["interval"] + 180):
         p.append("<p class=\"notice\">The checks have stopped, so this may be out of date."
                  " Let IT know.</p>")
@@ -666,45 +667,41 @@ def staff_status_section(status, zone, now):
         return p
 
     labels = {"up": "Up", "down": "Down", "unknown": "Checking", "unchecked": "Not checked"}
-    for heading, names in group_by_building(queues):
-        if heading:
-            group_down = sum(1 for n in names if queues[n]["check"] == "down")
-            tail = f", {group_down} down" if group_down else ""
-            p.append(f"<h3>{esc(heading)} <span>{plural(len(names), 'printer')}{tail}</span></h3>")
-        p.append("<div class=\"scroll\"><table class=\"board\"><colgroup><col style=\"width:44%\">"
-                 "<col style=\"width:24%\"><col style=\"width:19%\"><col style=\"width:13%\"></colgroup>"
-                 "<thead><tr><th>Printer</th><th>Printer status</th>"
-                 "<th>Queue</th><th class=\"num\">Jobs waiting</th></tr></thead><tbody>")
-        for name in names:
-            q = queues[name]
-            # A class reports its own name as its description; don't repeat it.
-            where = ", ".join(x for x in (q["description"], q["location"]) if x and x != name)
-            where = f"<span>{esc(where)}</span>" if where else ""
-            check = q["check"]
-            lamp = check if check in ("up", "down", "unchecked") else ""
-            label = labels[check]
-            if check == "down":
-                label = f"<span class=\"is-down\">{label}</span>"
-            since = ""
-            if check == "down" and q["since"]:
-                since = f"<small>since {esc(local(q['since']))}</small>"
-            elif check == "unchecked":
-                since = "<small>no network address to test</small>"
+    p.append("<div class=\"scroll\"><table class=\"board\"><thead><tr><th>Location</th>"
+             "<th>Description</th><th>Printer name</th><th>Printer status</th>"
+             "<th>Queue</th><th class=\"num\">Jobs waiting</th></tr></thead><tbody>")
+    for name in order:
+        q = queues[name]
+        location = (f"<td class=\"loc\">{esc(q['location'])}</td>" if q["location"]
+                    else "<td class=\"loc none\">No location set</td>")
+        # A class reports its own name as its description; don't repeat it.
+        description = q["description"] if q["description"] != name else ""
+        check = q["check"]
+        lamp = check if check in ("up", "down", "unchecked") else ""
+        label = labels[check]
+        if check == "down":
+            label = f"<span class=\"is-down\">{label}</span>"
+        since = ""
+        if check == "down" and q["since"]:
+            since = f"<small>since {esc(local(q['since']))}</small>"
+        elif check == "unchecked":
+            since = "<small>no network address to test</small>"
 
-            if q["state"] == "stopped":
-                queue = "<span class=\"attn\">Paused</span>"
-                if not q["accepting"]:
-                    queue += ", not accepting jobs"
-            elif not q["accepting"]:
-                queue = "<span class=\"attn\">Not accepting jobs</span>"
-            else:
-                queue = "Printing" if q["state"] == "printing" else "Ready"
+        if q["state"] == "stopped":
+            queue = "<span class=\"attn\">Paused</span>"
+            if not q["accepting"]:
+                queue += ", not accepting jobs"
+        elif not q["accepting"]:
+            queue = "<span class=\"attn\">Not accepting jobs</span>"
+        else:
+            queue = "Printing" if q["state"] == "printing" else "Ready"
 
-            row = " class=\"down\"" if check == "down" else ""
-            p.append(f"<tr{row}><td class=\"name\"><b>{esc(name)}</b>{where}</td>"
-                     f"<td class=\"state\"><span class=\"lamp {lamp}\"></span>{label}{since}</td>"
-                     f"<td class=\"queue\">{queue}</td><td class=\"num\">{q['jobs']:,}</td></tr>")
-        p.append("</tbody></table></div>")
+        row = " class=\"down\"" if check == "down" else ""
+        p.append(f"<tr{row}>{location}<td class=\"desc\">{esc(description)}</td>"
+                 f"<td class=\"id\">{esc(name)}</td>"
+                 f"<td class=\"state\"><span class=\"lamp {lamp}\"></span>{label}{since}</td>"
+                 f"<td class=\"queue\">{queue}</td><td class=\"num\">{q['jobs']:,}</td></tr>")
+    p.append("</tbody></table></div>")
     if unchecked:
         p.append(f"<p class=\"note after\">{plural(unchecked, 'printer')} can't be"
                  " checked from the server and "
@@ -712,17 +709,14 @@ def staff_status_section(status, zone, now):
     return p
 
 
-def staff_usage_section(db, month, months, current, default_allowance):
-    """Page totals for one month: by person, by printer and by building. Totals only."""
-    users = user_totals(db, month, default_allowance)
+def staff_usage_section(db, month, months, current, status):
+    """Page totals for one month, per printer. No people: those are in the report behind the login."""
     printers = db.execute(
         "SELECT printer, SUM(pages) AS pages, COUNT(*) AS jobs FROM jobs WHERE month = ?"
         " GROUP BY printer ORDER BY pages DESC, printer", (month,)).fetchall()
+    queues = {q["name"]: q for q in status["queues"]} if status else {}
 
     p = [f"<h2>Pages printed in {esc(month_title(month))}</h2>"]
-    if default_allowance > 0:
-        p.append(f"<p class=\"note\">Each person's allowance is {default_allowance:,} pages a month."
-                 " It is a guide: nothing stops printing when you pass it.</p>")
     if len(months) > 1:
         p.append("<nav class=\"months\" aria-label=\"Months\"><span>Month:</span>")
         for m in sorted(months, reverse=True):
@@ -732,46 +726,22 @@ def staff_usage_section(db, month, months, current, default_allowance):
             p.append(f"<a{here} href=\"{target}\">{esc(month_title(m))}</a>")
         p.append("</nav>")
 
-    if not users:
+    if not printers:
         p.append("<div class=\"scroll\"><div class=\"empty\">Nothing has been printed this month yet.</div></div>")
         return p
 
-    p.append("<h3>By person</h3>\n<div class=\"scroll\"><table><thead><tr><th>Person</th>"
-             "<th class=\"num\">Pages</th><th class=\"num\">Jobs</th><th>Allowance used</th>"
+    p.append("<div class=\"scroll\"><table><thead><tr><th>Location</th><th>Description</th>"
+             "<th>Printer name</th><th class=\"num\">Pages</th><th class=\"num\">Jobs</th>"
              "</tr></thead><tbody>")
-    for u in users:
-        if u["allowance"] > 0:
-            pct = round(100 * u["pages"] / u["allowance"])
-            used = f"<span class=\"meter\"><i style=\"width:{min(pct, 100)}%\"></i></span>{pct}%"
-            if u["custom"]:
-                used += f" of {u['allowance']:,}"
-            if u["over"]:
-                used += " <span class=\"over\">over</span>"
-        else:
-            used = ""
-        row = " class=\"over-row\"" if u["over"] else ""
-        p.append(f"<tr{row}><td>{esc(u['name'])}</td><td class=\"num\">{u['pages']:,}</td>"
-                 f"<td class=\"num\">{u['jobs']:,}</td><td class=\"used\">{used}</td></tr>")
+    for r in printers:
+        # A printer that has since been removed from the server has no description or location.
+        q = queues.get(r["printer"], {})
+        description = q.get("description", "")
+        p.append(f"<tr><td>{esc(q.get('location', ''))}</td>"
+                 f"<td>{esc(description if description != r['printer'] else '')}</td>"
+                 f"<td>{esc(r['printer'])}</td><td class=\"num\">{r['pages']:,}</td>"
+                 f"<td class=\"num\">{r['jobs']:,}</td></tr>")
     p.append("</tbody></table></div>")
-
-    def totals_table(heading, first, rows):
-        out = [f"<div><h3>{heading}</h3>\n<div class=\"scroll\"><table><thead><tr><th>{first}</th>"
-               "<th class=\"num\">Pages</th><th class=\"num\">Jobs</th></tr></thead><tbody>"]
-        for label, pages, jobs in rows:
-            out.append(f"<tr><td>{esc(label)}</td><td class=\"num\">{pages:,}</td>"
-                       f"<td class=\"num\">{jobs:,}</td></tr>")
-        out.append("</tbody></table></div></div>")
-        return out
-
-    p.append("<div class=\"pair\">")
-    p += totals_table("By printer", "Printer", [(r["printer"], r["pages"], r["jobs"]) for r in printers])
-    by_name = {r["printer"]: r for r in printers}
-    groups = group_by_building(by_name)
-    if len(groups) > 1:
-        rows = [(heading, sum(by_name[n]["pages"] for n in names), sum(by_name[n]["jobs"] for n in names))
-                for heading, names in groups]
-        p += totals_table("By building", "Building", sorted(rows, key=lambda r: (-r[1], r[0].casefold())))
-    p.append("</div>")
     return p
 
 
@@ -786,7 +756,7 @@ def staff_foot(zone, with_status):
     return p
 
 
-def render_staff(db, zone, default_allowance, status, only=None, out_dir=None):
+def render_staff(db, zone, status, only=None, out_dir=None):
     """Write the staff pages: index.html (status and this month) and one page per earlier month."""
     current = datetime.now(zone).strftime("%Y-%m")
     months = {r[0] for r in db.execute("SELECT DISTINCT month FROM jobs")} | {current}
@@ -799,7 +769,7 @@ def render_staff(db, zone, default_allowance, status, only=None, out_dir=None):
         else:
             p = staff_head(f"Print usage: {month_title(month)}")
             name = f"{month}.html"
-        p += staff_usage_section(db, month, months, current, default_allowance)
+        p += staff_usage_section(db, month, months, current, status)
         p += staff_foot(zone, month == current)
         write_file(name, "\n".join(p), out_dir or STAFF_DIR)
     return sorted(targets)
@@ -834,7 +804,7 @@ def cycle(state, zone, default_allowance):
 
         # The staff page is rewritten every cycle too, so it picks up each printer check.
         try:
-            render_staff(db, zone, default_allowance, load_status(), only=None if rebuild else changed)
+            render_staff(db, zone, load_status(), only=None if rebuild else changed)
             problem = None
         except OSError as error:
             problem = f"{type(error).__name__}: {error}"

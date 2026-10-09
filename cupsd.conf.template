@@ -135,10 +135,10 @@ DefaultPolicy default
   @ADMIN_ALLOW@
 </Location>
 
-# --- Staff page: printer status and page totals, written by the usage service.
-#     No login. Open to the same subnets that can print, plus the admin sources
-#     (a reverse proxy, for example). It holds no document names, computer
-#     addresses or job log. ---
+# --- Staff page: printer status and page totals per printer, written by the
+#     usage service. No login. Open to the same subnets that can print, plus the
+#     admin sources (a reverse proxy, for example). It holds no people, document
+#     names, computer addresses or job log. ---
 <Location /status>
   Order allow,deny
   @PRINT_ALLOW@

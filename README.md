@@ -16,7 +16,7 @@ The admin UI is at `https://<CUPS_SERVER_NAME>:631/admin` and is HTTPS only. Sig
 
 | Page | Address | Who |
 |---|---|---|
-| Staff page: printer status and page totals | `http://<server>:631/status/` | Print subnets, no login |
+| Staff page: printer status and pages per printer | `http://<server>:631/status/` | Print subnets, no login |
 | Usage reports: totals, job log, CSV | `https://<server>:631/usage/` | Admin subnets, admin or view-only login |
 | CUPS administration | `https://<server>:631/admin` | Admin subnets, admin login |
 
@@ -48,7 +48,7 @@ Subnet lists are space- or comma-separated IPv4 CIDRs. The container won't start
 ## Access model
 
 - **Printing and status queries:** open to `CUPS_PRINT_SUBNETS`.
-- **Staff page:** `/status/` is open to `CUPS_PRINT_SUBNETS` and `CUPS_ADMIN_SUBNETS` without a login. It shows queue names, printer status, and page totals per person, printer and building. It never shows document names, computer addresses or the job log.
+- **Staff page:** `/status/` is open to `CUPS_PRINT_SUBNETS` and `CUPS_ADMIN_SUBNETS` without a login. It shows each printer's location, description, queue name and status, and page totals per printer. It never shows who printed, document names, computer addresses or the job log.
 - **Other people's jobs:** a job's document name, user name and source computer are visible only to its owner and to admins. Anyone else who lists jobs sees job numbers and states only.
 - **Job actions:** cancelling, holding, or moving a job is limited to the job's owner or an admin.
 - **Administration:** adding, deleting, or pausing printers requires an authenticated admin, whatever URL the request is sent to. `/admin` also requires TLS.
@@ -59,18 +59,18 @@ Subnet lists are space- or comma-separated IPv4 CIDRs. The container won't start
 
 `http://<server>:631/status/` is for everyone who prints. It needs no login and shows:
 
-- every queue, grouped by building, with its description and location
+- every queue in one list, ordered by location, with its description and queue name
 - whether each printer is up or down, and since when it has been down
 - the queue state (ready, printing, paused, not accepting jobs) and the number of jobs waiting
-- page totals for the month per person against the allowance, per printer, and per building
+- pages and jobs per printer for the month, with a page for each earlier month
+
+It shows nothing about people. Totals per person, the allowance, and the job log are in the usage reports, behind the login.
 
 **Up** means the printer accepted a TCP connection on the port its queue prints to (9100, 631 or 515, read from the queue's address). It doesn't show paper, toner or jams. The check runs inside the CUPS container every `STATUS_CHECK_MINUTES`. A printer is reported down after two failed checks in a row, so one missed check doesn't flag it. A queue with no network address (a class, or a USB or discovered queue) shows as "Not checked".
 
 Printer addresses are never written to the page or to the file the check produces.
 
-**Building** is the part of a queue name before the first hyphen or underscore: `north-library` and `north-room12` are grouped under `north`. Queues without one are listed under "Other". If no queue name has a prefix, the page shows one list.
-
-Everyone on a print subnet can see every person's page totals on this page. Tell staff before you point them at it.
+The page identifies printers by the **description and location** set on each queue, so set both (`lpadmin -p <queue> -D "<description>" -L "<location>"`). That matters most when queue names are codes such as asset numbers. Queues with no location are listed last.
 
 Run a check by hand and print the result:
 
