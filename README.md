@@ -202,6 +202,19 @@ docker exec <container> cat /proc/sys/net/ipv4/ip_forward     # must print 0
 
 A reverse proxy in front of the web UI is supported. Add its hostname to `CUPS_SERVER_ALIASES`, and forward to the container over **https** on port 631, because `/admin` requires TLS.
 
+## Backups
+
+`scripts/backup.sh` saves the queues, the server certificate, the usage history and `.env` as encrypted [restic](https://restic.net) snapshots, on a nightly systemd timer, and restores them onto the same or a rebuilt server. Set `RESTIC_REPOSITORY` and `RESTIC_PASSWORD` in `.env`, then:
+
+```bash
+sudo scripts/backup.sh init             # once per backup location
+sudo scripts/backup.sh run              # back up now
+sudo scripts/backup.sh install-timer    # then every night
+scripts/backup.sh status                # exit 0 if a backup succeeded in the last 36 hours
+```
+
+See [docs/backup.md](docs/backup.md) for the restore procedure, monitoring, and moving to a different backup location.
+
 ## Known PoC limitations
 
 - With macvlan, the Docker host can't reach the container's IPs directly. Test from another machine on a client subnet.
