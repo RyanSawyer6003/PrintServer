@@ -13,6 +13,8 @@ docker logs <CUPS_CONTAINER_NAME>
 docker ps                   # STATUS should show (healthy) within ~1 minute
 ```
 
+**For a new server, follow [docs/deploy.md](docs/deploy.md)**: planning the values, network preparation, adding printers, the certificate, backups and monthly updates, with a checklist at the end.
+
 The images are built, tested and published by GitHub Actions; see [Releases and updates](#releases-and-updates). To build from the checkout instead, use `docker compose up -d --build`.
 
 The admin UI is at `https://<CUPS_SERVER_NAME>:631/admin` and is HTTPS only. Sign in with the `CUPS_ADMIN_USER` account. CUPS uses a self-signed certificate issued to `CUPS_SERVER_NAME`, so expect a browser warning until clients trust it.
@@ -311,13 +313,15 @@ The scan fails on private addresses outside the placeholder ranges `10.10`, `10.
 
 ### Updating a server
 
+`scripts/update.sh` pulls the images for `IMAGE_TAG`, recreates what changed, checks that both containers are healthy, that the default route is on the service network and that forwarding is off, and puts the previous images back if a check fails. It refuses to run without a backup from the last 36 hours.
+
 ```bash
-docker compose pull
-docker compose up -d
-docker image prune -f        # remove the images that were replaced
+sudo scripts/update.sh run              # update now
+sudo scripts/update.sh install-timer    # the first Saturday of each month, 03:30
+sudo scripts/update.sh status           # for monitoring: exit 0 if current, 1 if not, 2 if never run
 ```
 
-Then run the checks under [Routing](#routing). The repository checkout on the server only needs updating when `docker-compose.yml`, the scripts or the docs change; the images don't depend on it.
+See [docs/deploy.md](docs/deploy.md#12-set-up-monthly-updates). The repository checkout on the server only needs updating when `docker-compose.yml`, the scripts or the docs change; the images don't depend on it.
 
 **Rolling back:** set `IMAGE_TAG` to the previous version or a dated tag (the release page and the workflow summary list them), then `docker compose pull && docker compose up -d`. Volumes are untouched by an image change.
 
