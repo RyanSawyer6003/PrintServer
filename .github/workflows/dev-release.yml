@@ -1,0 +1,77 @@
+# Weekly dev build: tags the default branch as a pre-release, vX.Y.Z-dev.YYYYMMDD
+# (scripts/ci/next-dev-tag.sh), with GitHub's notes listing what was merged, and
+# publishes it to the dev channel. Weeks with nothing merged since the newest
+# release are skipped. Servers with IMAGE_TAG=dev pick it up on their next
+# scripts/update.sh run.
+#
+# Prod is unaffected: prod releases stay a hand-made vX.Y.Z release.
+name: Dev release
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"     # Mondays 05:17 UTC (Sunday night in US time zones)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag this week's build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write          # create the release and its tag
+    outputs:
+      tag: ${{ steps.next.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch || 'main' }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: next
+        name: Choose the tag
+        run: |
+          tag=$(scripts/ci/next-dev-tag.sh 2> reason.txt)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -n "$tag" ]; then
+            echo "Dev build: **$tag** from \`$(git rev-parse --short HEAD)\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No dev build this week: $(cat reason.txt)" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Create the pre-release
+        if: steps.next.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.next.outputs.tag }}
+        run: |
+          previous=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' \
+            | sed 's/-/~/' | sort -V | tail -n 1 | sed 's/~/-/')
+          gh api "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$TAG" \
+            -f target_commitish="$(git rev-parse HEAD)" \
+            -f name="$TAG" \
+            -F prerelease=true \
+            -f make_latest=false \
+            -F generate_release_notes=true \
+            -f previous_tag_name="$previous" \
+            --jq '"created \(.html_url)"'
+
+  publish:
+    name: Publish
+    needs: tag
+    if: needs.tag.outputs.tag != ''
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish.yml
+    with:
+      release_tag: ${{ needs.tag.outputs.tag }}
+      prerelease: true

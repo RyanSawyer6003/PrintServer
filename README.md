@@ -285,8 +285,11 @@ A server follows a channel through `IMAGE_TAG` in `.env`. The channel is set by 
 |---|---|---|
 | `vX.Y.Z`, e.g. `v1.2.0` | Full release | `prod`: the newest of these |
 | `vX.Y.Z-<suffix>`, e.g. `v1.3.0-rc.1` | Pre-release (tick "Set as a pre-release") | `dev`: the newest release of either kind |
+| `vX.Y.Z-dev.YYYYMMDD`, e.g. `v1.0.2-dev.20261026` | Pre-release, created weekly by the Dev release workflow | `dev` |
 
 The publish workflow refuses a release whose pre-release box doesn't match its name, and tags that fit neither pattern (such as the old `v0.1`).
+
+**Weekly dev builds.** Every Monday the Dev release workflow tags the head of `main` as a pre-release and publishes it to `dev`, unless nothing has been merged since the newest release. Its notes list the pull requests merged since then. The version is chosen so the build sorts after every existing release: it keeps the version of the previous dev build, or moves to the next patch after anything else (`v1.0.1` → `v1.0.2-dev.<date>`). A release or release candidate made by hand for that version (`v1.0.2-rc.1`, `v1.0.2`) sorts after its dev builds. Prod is never changed by a dev build: promoting is still publishing `vX.Y.Z` by hand.
 
 Every image also gets two version tags: `v1.2.0`, which moves with each monthly rebuild, and `v1.2.0-YYYYMMDD`, which never moves. Pin `IMAGE_TAG` to either to stop following a channel.
 
@@ -295,9 +298,10 @@ Every image also gets two version tags: `v1.2.0`, which moves with each monthly 
 | Workflow | When | What |
 |---|---|---|
 | **CI** (`.github/workflows/ci.yml`) | Every pull request and push to `main` | Scans files, commit messages and commit identities for site values (`scripts/ci/check-site-values.sh`); runs shellcheck; builds both images and smoke-tests them (`scripts/ci/smoke-test.sh`). Publishes nothing. |
-| **Publish images** (`.github/workflows/publish.yml`) | A release is published; the 1st of each month; by hand | Builds the release and the current `prod` and `dev` releases from scratch on a fresh Debian base, smoke-tests both images of each, and only then pushes them. A failed build or test leaves the channel tags where they were. |
+| **Publish images** (`.github/workflows/publish.yml`) | A release is published, or a dev build is tagged; the 1st of each month; by hand | For a release or dev build: builds that one. Monthly and by hand: rebuilds the current `prod` and `dev` releases. Always from scratch on a fresh Debian base, smoke-testing both images before pushing either. A failed build or test leaves the channel tags where they were. |
+| **Dev release** (`.github/workflows/dev-release.yml`) | Mondays 05:17 UTC; by hand | Tags `main` as `vX.Y.Z-dev.YYYYMMDD` (`scripts/ci/next-dev-tag.sh`), creates the pre-release with generated notes, and runs the publish workflow for it. Skips weeks with nothing merged. |
 
-The monthly run is the security rebuild: it picks up Debian's updates without a new release. GitHub disables scheduled workflows in a public repository after 60 days with no commits; if that happens, re-enable it under **Actions → Publish images**, or run it by hand.
+The monthly run is the security rebuild: it picks up Debian's updates without a new release. GitHub disables scheduled workflows in a public repository after 60 days with no commits; if that happens, re-enable them under **Actions**, or run them by hand.
 
 The smoke test runs the real entrypoint (so `cupsd.conf` is rendered and checked with `cupsd -t`), checks the Status and Usage links in the CUPS pages, that `/admin` refuses plain http and asks for a login over https, that the container doesn't forward, and runs the unit tests on the image's own Python. It does not test macvlan networking, printing, or the volumes.
 
@@ -317,7 +321,7 @@ The scan fails on private addresses outside the placeholder ranges `10.10`, `10.
 
 ```bash
 sudo scripts/update.sh run              # update now
-sudo scripts/update.sh install-timer    # the first Saturday of each month, 03:30
+sudo scripts/update.sh install-timer    # the first Saturday of each month, 03:30 (add --weekly on a dev server)
 sudo scripts/update.sh status           # for monitoring: exit 0 if current, 1 if not, 2 if never run
 ```
 
