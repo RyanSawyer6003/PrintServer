@@ -77,7 +77,7 @@ Fill in the values from step 1. Leave `IMAGE_TAG=prod`. The README's [Configurat
 
 ```bash
 sudo docker compose config --images     # ghcr.io/.../printserver-cups:prod and printserver-usage:prod
-sudo docker compose pull
+sudo docker compose pull --policy always
 sudo docker compose up -d
 sudo docker compose ps                  # both containers (healthy) within about a minute
 sudo docker compose logs cups           # the admin password, if you left it blank
@@ -214,7 +214,7 @@ A missed run (the host was off) waits until the next month rather than restartin
 
 **Monitoring:** `sudo scripts/update.sh status` (it reads the images, so it needs Docker access) exits 0 when an update succeeded in the last 40 days and the running image is less than 45 days old, 1 otherwise, 2 if no update has run. A channel image that keeps getting older means the monthly publish has stopped: GitHub disables scheduled workflows in a public repository after 60 days without commits. Have your monitoring run this and `scripts/backup.sh status`, and alert on a non-zero exit.
 
-**Rolling back by hand:** set `IMAGE_TAG` in `.env` to a previous version (`v1.2.0`) or one exact monthly build (`v1.2.0-20261101`), then `sudo docker compose pull && sudo docker compose up -d`. Set it back to `prod` once the problem is fixed, or the server stays on that version. The release notes and the workflow summaries on GitHub list the tags.
+**Rolling back by hand:** set `IMAGE_TAG` in `.env` to a previous version (`v1.2.0`) or one exact monthly build (`v1.2.0-20261101`), then `sudo docker compose pull --policy always && sudo docker compose up -d`. Set it back to `prod` once the problem is fixed, or the server stays on that version. The release notes and the workflow summaries on GitHub list the tags.
 
 **The repository on the server** only needs a `git pull` when the compose file, the scripts or the documentation change; release notes say when. Keep the checkout free of local edits, or `git pull` refuses.
 
