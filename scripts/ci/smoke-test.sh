@@ -22,15 +22,17 @@ kind=${1:?usage: smoke-test.sh cups|usage <image>}
 image=${2:?usage: smoke-test.sh cups|usage <image>}
 src=$(cd "${SMOKE_SRC:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}" && pwd)
 
-pass() { echo "ok   $*"; }
+pass() { echo "ok   $*"; [ -z "${GITHUB_ACTIONS:-}" ] || echo "::notice title=smoke test ($kind)::$*"; }
 die()  { echo "::error::smoke test ($kind): $*"; exit 1; }
 
 case $kind in
 cups)
     echo "--- status check unit tests"
-    docker run --rm --network none -v "$src/status:/t:ro" -w /t \
+    out=$(docker run --rm --network none -v "$src/status:/t:ro" -w /t \
         -e PYTHONDONTWRITEBYTECODE=1 --entrypoint python3 "$image" \
-        -m unittest discover -s /t -v
+        -m unittest discover -s /t -v 2>&1) || { echo "$out"; die "status check unit tests failed"; }
+    echo "$out"
+    pass "status check unit tests: $(grep -m1 '^Ran ' <<<"$out")"
 
     net=printserver-ci-$$
     name=printserver-ci-cups-$$
@@ -88,9 +90,11 @@ cups)
 
 usage)
     echo "--- usage unit tests"
-    docker run --rm --network none -v "$src/usage:/t:ro" -w /t \
+    out=$(docker run --rm --network none -v "$src/usage:/t:ro" -w /t \
         -e PYTHONDONTWRITEBYTECODE=1 --entrypoint python3 "$image" \
-        -m unittest discover -s /t -v
+        -m unittest discover -s /t -v 2>&1) || { echo "$out"; die "usage unit tests failed"; }
+    echo "$out"
+    pass "usage unit tests: $(grep -m1 '^Ran ' <<<"$out")"
 
     echo "--- one pass, restricted as in docker-compose.yml"
     docker run --rm --network none --read-only --cap-drop ALL \
