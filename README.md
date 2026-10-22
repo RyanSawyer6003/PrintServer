@@ -15,6 +15,8 @@ docker ps                   # STATUS should show (healthy) within ~1 minute
 
 **For a new server, follow [docs/deploy.md](docs/deploy.md)**: planning the values, network preparation, adding printers, the certificate, backups and monthly updates, with a checklist at the end.
 
+**For day-to-day tasks on a running server, see [docs/runbook.md](docs/runbook.md)**: printers, allowance overrides, the view-only login, restarts and updates, subnet changes, and what never to change.
+
 The images are built, tested and published by GitHub Actions; see [Releases and updates](#releases-and-updates). To build from the checkout instead, use `docker compose up -d --build`.
 
 The admin UI is at `https://<CUPS_SERVER_NAME>:631/admin` and is HTTPS only. Sign in with the `CUPS_ADMIN_USER` account. CUPS uses a self-signed certificate issued to `CUPS_SERVER_NAME`, so expect a browser warning until clients trust it.
