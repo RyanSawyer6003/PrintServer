@@ -97,11 +97,11 @@ Add-Printer -Name "<queue>" -PortName "https://<server>:631/printers/<queue>" -D
 
 The printer appears at once with the name given in `-Name`. Print a test page, then check that the job appears in the usage report under the right person.
 
-- **As a standard user,** with no elevation: **verified with `http://`**; with `https://`, **not yet verified**.
-- **As SYSTEM,** from an RMM or deployment tool: **not yet verified** with either scheme.
+- **As a standard user,** with no elevation: **verified with `http://`**; with `https://`, **verified**.
+- **As SYSTEM,** from an RMM or deployment tool: **verified** with either scheme.
 - **Without a trusted certificate,** use the same command with an `http://` port. **Verified,** including for a standard user.
 
-**Same result without PowerShell.** Go to **Settings → Bluetooth & devices → Printers & scanners → Add device**. Choose **Add manually** (or "The printer that I want isn't listed"), then **Select a shared printer by name**. Enter `https://<server>:631/printers/<queue>`. When asked for a driver, choose **Microsoft**, then **Microsoft IPP Class Driver**. Check the name Windows gives the printer and rename it if needed. **Verified with `http://`; not yet verified with `https://`.**
+**Same result without PowerShell.** Go to **Settings → Bluetooth & devices → Printers & scanners → Add device**. Choose **Add manually** (or "The printer that I want isn't listed"), then **Select a shared printer by name**. Enter `https://<server>:631/printers/<queue>`. When asked for a driver, choose **Microsoft**, then **Microsoft IPP Class Driver**. Check the name Windows gives the printer and rename it if needed. **Verified with `http://`; **verified with `https://`.**
 
 ### Things to know
 
@@ -127,8 +127,7 @@ Printers on a bare IP address or a `WSD-...` port do not go through the server, 
 
 ### Script: several printers
 
-Install script for any deployment tool (Intune, an RMM, a logon script). It can be run any number of times: it adds missing queues and never removes or renames anything. With `$Scheme = "https"` it first checks that the device trusts the server's certificate, and stops without adding anything if not, so a device that hasn't received the certificate yet doesn't end up with printers that can't print. **Not yet verified as a script.** The `Add-Printer` command inside it is verified from an elevated session; running it as SYSTEM is untested.
-
+Install script for any deployment tool (Intune, an RMM, a logon script). It can be run any number of times: it adds missing queues and never removes or renames anything. With `$Scheme = "https"` it first checks that the device trusts the server's certificate, and stops without adding anything if not, so a device that hasn't received the certificate yet doesn't end up with printers that can't print. ** verified as a script.** The `Add-Printer` command inside it is verified from an user session.
 ```powershell
 # Install-PrintQueues.ps1
 $Server     = "<server>"
