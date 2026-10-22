@@ -31,8 +31,10 @@ Usage: $(basename "$SELF") <command>
   status [DAYS]         Exit 0 if a run succeeded in the last DAYS (default 40) and the
                         running channel image is less than $IMAGE_MAX_AGE_DAYS days old;
                         1 if not; 2 if no run is recorded. For monitoring
-  install-timer [HH:MM] Install the monthly systemd timer: the first Saturday of each
-                        month at HH:MM host time (default 03:30)
+  install-timer [HH:MM] [--weekly]
+                        Install the systemd timer: the first Saturday of each month at
+                        HH:MM host time (default 03:30). --weekly runs it every Monday
+                        instead, after the weekly dev build; for a server on IMAGE_TAG=dev
   remove-timer          Stop and remove the timer
 EOF
 }
@@ -215,7 +217,13 @@ cmd_status() {
 }
 
 cmd_install_timer() {
-    local at=${1:-03:30}
+    local at=03:30 when desc="Monthly" arg
+    for arg in "$@"; do
+        case $arg in
+            --weekly) desc="Weekly" ;;
+            *) at=$arg ;;
+        esac
+    done
     [ "$(id -u)" = 0 ] || die "run with sudo"
     [[ $at =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die "the time must be HH:MM, 24-hour"
     case $SELF in
@@ -231,15 +239,21 @@ Wants=docker.service network-online.target
 Type=oneshot
 ExecStart=$SELF run
 EOF
-    # The first Saturday of each month, after the publish on the 1st. Not
-    # Persistent: a missed run waits a month rather than restarting the print
-    # server in the middle of a school day.
+    # Monthly: the first Saturday, after the publish on the 1st. Weekly: Mondays,
+    # after the dev build early on Monday (UTC). Not Persistent: a missed run
+    # waits for the next one rather than restarting the print server in the
+    # middle of a school day.
+    if [ "$desc" = Weekly ]; then
+        when="Mon *-*-* $at:00"
+    else
+        when="Sat *-*-01..07 $at:00"
+    fi
     cat > "/etc/systemd/system/$UNIT.timer" <<EOF
 [Unit]
-Description=Monthly print server image update
+Description=$desc print server image update
 
 [Timer]
-OnCalendar=Sat *-*-01..07 $at:00
+OnCalendar=$when
 Persistent=false
 
 [Install]

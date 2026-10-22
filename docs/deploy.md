@@ -208,7 +208,9 @@ A run:
 - waits for both containers to be healthy, then checks the default route and that forwarding is off;
 - if any check fails, puts the previous images back, checks again, and exits with an error.
 
-A missed run (the host was off) waits until the next month rather than restarting the server during the day. To update by hand at any time, run `sudo scripts/update.sh run`.
+A missed run (the host was off) waits until the next month rather than restarting the server during the day.
+
+**A test or dev server** that follows the weekly dev builds sets `IMAGE_TAG=dev` and installs the timer with `--weekly` (Mondays, after the build): `sudo scripts/update.sh install-timer --weekly`. Give it its own `.env`, with its own addresses and server name, so it never answers for the production server. To update by hand at any time, run `sudo scripts/update.sh run`.
 
 **Monitoring:** `sudo scripts/update.sh status` (it reads the images, so it needs Docker access) exits 0 when an update succeeded in the last 40 days and the running image is less than 45 days old, 1 otherwise, 2 if no update has run. A channel image that keeps getting older means the monthly publish has stopped: GitHub disables scheduled workflows in a public repository after 60 days without commits. Have your monitoring run this and `scripts/backup.sh status`, and alert on a non-zero exit.
 

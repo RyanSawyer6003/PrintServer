@@ -6,7 +6,8 @@
 # new image of one and an old image of the other.
 #
 # Inputs (environment):
-#   EVENT        release | schedule | workflow_dispatch
+#   EVENT        release | schedule | workflow_dispatch ("release" also for a dev
+#                build, which dev-release.yml passes in as a release)
 #   RELEASE_TAG  the published release's tag (release events)
 #   PRERELEASE   true | false, GitHub's pre-release box (release events)
 #   IMAGE_BASE   e.g. ghcr.io/<owner>/printserver; images are <base>-cups and <base>-usage
@@ -44,11 +45,14 @@ if [ "$EVENT" = release ]; then
         exit 1
     fi
     builds+=("$tag")
+else
+    # Scheduled or by hand: rebuild the current head of each channel. A release
+    # builds only itself, so publishing one never changes another channel's images.
+    for t in "$prod" "$dev"; do
+        [ -n "$t" ] || continue
+        [[ " ${builds[*]} " == *" $t "* ]] || builds+=("$t")
+    done
 fi
-for t in "$prod" "$dev"; do
-    [ -n "$t" ] || continue
-    [[ " ${builds[*]} " == *" $t "* ]] || builds+=("$t")
-done
 
 {
     for v in "${builds[@]}"; do
