@@ -14,13 +14,16 @@ Each method is marked **Verified** (tested against this server) or **Not yet ver
 | `<queue>` | The queue name as shown on the server's Printers page |
 | Network access | The client's subnet must be in `CUPS_PRINT_SUBNETS`, and TCP 631 must be open from the client to the server |
 
-A queue can be addressed in three ways. All three point at the same queue:
+A queue can be addressed in four ways. All four point at the same queue:
 
 | Form | Used by |
 |---|---|
-| `http://<server>:631/printers/<queue>` | Windows (the recommended method below) |
+| `https://<server>:631/printers/<queue>` | Windows (the recommended method below). Encrypted. The device must trust the server's certificate. |
+| `http://<server>:631/printers/<queue>` | Windows on a device that doesn't trust the certificate. Unencrypted: print data crosses the network in the clear. |
 | `ipp://<server>:631/printers/<queue>` | macOS, Linux, ChromeOS. Unencrypted. |
-| `ipps://<server>:631/printers/<queue>` | Encrypted. Clients must trust the server's certificate, and by default CUPS uses a self-signed one. |
+| `ipps://<server>:631/printers/<queue>` | macOS, Linux, ChromeOS, encrypted. The device must trust the server's certificate. |
+
+The server's certificate is self-signed by CUPS unless you have replaced it. [deploy.md, step 9](deploy.md#9-have-clients-trust-the-certificate) shows how to check it and copy it off the server.
 
 ## Find printers on the server
 
@@ -62,22 +65,49 @@ Choose queue names people can recognise, such as a room or area. The Windows met
 
 ## Windows
 
-### Quickest: one printer
+Windows prints to the server over `https` once the device trusts the server's certificate, and over `http` otherwise. Use `https`: with `http`, documents cross the network, and any links between sites, unencrypted.
 
-PowerShell, as the signed-in user. **Verified:** works for a standard user with no elevation.
+### Trust the server's certificate
+
+Do this once per device, before adding printers. The certificate must go in the **computer's** trusted root store (`LocalMachine\Root`), not the user's: the printer is installed for the whole device, and the print spooler that connects to the server runs as SYSTEM.
+
+- **Managed devices:** an Intune **Trusted certificate** profile (Windows 10 and later; destination store: computer certificate store - Root), or a Group Policy that adds it to *Trusted Root Certification Authorities*. **Verified** with Intune.
+- **One device by hand,** from an elevated PowerShell. **Verified.**
+
+  ```powershell
+  Import-Certificate -FilePath .\<server>.crt -CertStoreLocation Cert:\LocalMachine\Root
+  ```
+
+Compare the certificate's thumbprint with the server's copy before trusting it, and check that the device has it:
 
 ```powershell
-Add-Printer -Name "<queue>" -PortName "http://<server>:631/printers/<queue>" -DriverName "Microsoft IPP Class Driver"
+Get-ChildItem Cert:\LocalMachine\Root | Where-Object Subject -eq "CN=<server>" |
+    Format-List Subject, Thumbprint, NotAfter
 ```
 
-The printer appears at once with the name given in `-Name`.
+The certificate must name the full server name (`<server>`), not a short host name: Windows rejects a name mismatch even for a trusted certificate. If the server's certificate is ever replaced, every device needs the new one.
 
-**Same result without PowerShell. Verified.** Go to **Settings → Bluetooth & devices → Printers & scanners → Add device**. Choose **Add manually** (or "The printer that I want isn't listed"), then **Select a shared printer by name**. Enter `http://<server>:631/printers/<queue>`. When asked for a driver, choose **Microsoft**, then **Microsoft IPP Class Driver**. Check the name Windows gives the printer and rename it if needed.
+### Quickest: one printer
+
+PowerShell, on a device that trusts the certificate. **Verified** from an elevated session.
+
+```powershell
+Add-Printer -Name "<queue>" -PortName "https://<server>:631/printers/<queue>" -DriverName "Microsoft IPP Class Driver"
+```
+
+The printer appears at once with the name given in `-Name`. Print a test page, then check that the job appears in the usage report under the right person.
+
+- **As a standard user,** with no elevation: **verified with `http://`**; with `https://`, **not yet verified**.
+- **As SYSTEM,** from an RMM or deployment tool: **not yet verified** with either scheme.
+- **Without a trusted certificate,** use the same command with an `http://` port. **Verified,** including for a standard user.
+
+**Same result without PowerShell.** Go to **Settings → Bluetooth & devices → Printers & scanners → Add device**. Choose **Add manually** (or "The printer that I want isn't listed"), then **Select a shared printer by name**. Enter `https://<server>:631/printers/<queue>`. When asked for a driver, choose **Microsoft**, then **Microsoft IPP Class Driver**. Check the name Windows gives the printer and rename it if needed. **Verified with `http://`; not yet verified with `https://`.**
 
 ### Things to know
 
 - **The printer is installed for the whole device**, even when a standard user adds it. Every user of that computer sees it. Jobs are still recorded under the name of the person printing.
-- **Use `http://` unless the server has a certificate Windows trusts.** With the default self-signed certificate, `https://` fails on this method, which means print data crosses the network unencrypted. Using `https://` with a trusted certificate is **not yet verified**.
+- **`https://` fails if the certificate isn't trusted, or doesn't carry the full server name.** The error doesn't say why; check the certificate first (above, and [Troubleshooting](#troubleshooting)).
+- **The scheme is part of the printer.** A printer added with `http://` keeps using `http://` after the certificate is trusted. To move it to `https://`, remove it and add it again.
 - **The driver must already be on the device.** Check with `Get-PrinterDriver -Name "Microsoft IPP Class Driver"`. A standard user can't add a driver. If it's missing, add it once from an elevated session with `Add-PrinterDriver -Name "Microsoft IPP Class Driver"`.
 - **Avoid `Add-Printer -IppURL`** and the "Add a printer using an IP address or hostname" option for this server. They need administrator rights, take minutes to finish, name every printer "Generic IPP Everywhere Printer", and use a `WSD-<GUID>` port that can't be traced back to a queue.
 - **LPR/LPD, raw port 9100, and Standard TCP/IP ports don't work.** The server only accepts IPP on port 631.
@@ -85,7 +115,7 @@ The printer appears at once with the name given in `-Name`.
 ### Check and remove
 
 ```powershell
-# Which printers go through the server
+# Which printers go through the server, and whether they use https
 Get-Printer | Where-Object PortName -like "*://<server>:631/printers/*" |
     Format-Table Name, PortName, DriverName -AutoSize
 
@@ -97,14 +127,20 @@ Printers on a bare IP address or a `WSD-...` port do not go through the server, 
 
 ### Script: several printers
 
-Install script for any deployment tool (Intune, an RMM, a logon script). It can be run any number of times: it adds missing queues and never removes or renames anything. **Not yet verified as a script.** The command inside it is verified as the signed-in user. Running it as SYSTEM is untested.
+Install script for any deployment tool (Intune, an RMM, a logon script). It can be run any number of times: it adds missing queues and never removes or renames anything. With `$Scheme = "https"` it first checks that the device trusts the server's certificate, and stops without adding anything if not, so a device that hasn't received the certificate yet doesn't end up with printers that can't print. **Not yet verified as a script.** The `Add-Printer` command inside it is verified from an elevated session; running it as SYSTEM is untested.
 
 ```powershell
 # Install-PrintQueues.ps1
-$Server = "<server>"
-$Scheme = "http"                         # "https" only with a certificate the clients trust
-$Queues = @("<queue1>", "<queue2>")
-$Driver = "Microsoft IPP Class Driver"
+$Server     = "<server>"
+$Scheme     = "https"                    # "http" only for devices that don't trust the certificate
+$Thumbprint = "<certificate thumbprint>" # the server certificate's SHA-1 thumbprint, no spaces
+$Queues     = @("<queue1>", "<queue2>")
+$Driver     = "Microsoft IPP Class Driver"
+
+if ($Scheme -eq "https" -and -not (Test-Path "Cert:\LocalMachine\Root\$Thumbprint")) {
+    Write-Output "The server's certificate isn't in this device's trusted root store yet; nothing added."
+    exit 1
+}
 
 if (-not (Get-PrinterDriver -Name $Driver -ErrorAction SilentlyContinue)) {
     try   { Add-PrinterDriver -Name $Driver -ErrorAction Stop }      # needs elevation
@@ -127,14 +163,20 @@ if ($problems) { Write-Output ($problems -join "`n"); exit 1 }
 exit 0
 ```
 
-For a deployment tool that runs a detection script first (such as Intune Remediations), use this with the same three variables:
+A printer that already exists under the same name on another port, such as an `http://` port or a direct-IP printer, is reported rather than changed.
+
+For a deployment tool that runs a detection script first (such as Intune Remediations), use this with the same variables:
 
 ```powershell
-# Detect-PrintQueues.ps1 - exit 0 when every queue is installed, 1 otherwise
-$Server = "<server>"
-$Scheme = "http"
-$Queues = @("<queue1>", "<queue2>")
+# Detect-PrintQueues.ps1 - exit 0 when the certificate and every queue are in place, 1 otherwise
+$Server     = "<server>"
+$Scheme     = "https"
+$Thumbprint = "<certificate thumbprint>"
+$Queues     = @("<queue1>", "<queue2>")
 
+if ($Scheme -eq "https" -and -not (Test-Path "Cert:\LocalMachine\Root\$Thumbprint")) {
+    Write-Output "Certificate not trusted yet"; exit 1
+}
 $missing = $Queues | Where-Object {
     $p = Get-Printer -Name $_ -ErrorAction SilentlyContinue
     -not $p -or $p.PortName -ne "${Scheme}://${Server}:631/printers/$_"
@@ -281,8 +323,9 @@ If the same person uses different account names on different platforms, they app
 Check from the client that the queue is reachable:
 
 ```powershell
-# Windows
+# Windows. curl.exe checks the certificate against the Windows certificate store.
 Test-NetConnection <server> -Port 631
+curl.exe -s -o NUL -w "%{http_code}`n" https://<server>:631/printers/<queue>
 curl.exe -s -o NUL -w "%{http_code}`n" http://<server>:631/printers/<queue>
 ```
 
@@ -297,6 +340,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://<server>:631/printers/<queue>
 | `403` | The client's subnet isn't in `CUPS_PRINT_SUBNETS`. |
 | `400` | The name used isn't `CUPS_SERVER_NAME` or one of `CUPS_SERVER_ALIASES`. Use the server's name, not its IP. |
 | `404` | No queue by that name. Check the Printers page. |
+| `000` on `https` only, `200` on `http` | The device doesn't trust the certificate, or the certificate doesn't name `<server>`. Run `curl.exe` without `-s` to see the error, and check the certificate as shown under Windows. |
 | Connection fails | DNS, routing or a firewall between the client and port 631. |
 
 If the printer installs but nothing prints, look for the job on the server's **Jobs** tab. If it's there, the problem is between the server and the printer. If it isn't, the job never left the client.
