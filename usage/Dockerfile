@@ -1,4 +1,4 @@
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 # Standard library only: no pip packages. tzdata provides the time zone names.
 RUN apt-get update && apt-get install -y --no-install-recommends \
