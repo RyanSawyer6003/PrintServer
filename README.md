@@ -7,10 +7,13 @@ Dockerized CUPS print server. The container has two macvlan network legs: one fa
 ```bash
 git clone <this repo> && cd <repo>
 cp .env.example .env        # fill in real values; .env is gitignored
-docker compose up -d --build
+docker compose pull         # the published images for IMAGE_TAG (default: prod)
+docker compose up -d
 docker logs <CUPS_CONTAINER_NAME>
 docker ps                   # STATUS should show (healthy) within ~1 minute
 ```
+
+The images are built, tested and published by GitHub Actions; see [Releases and updates](#releases-and-updates). To build from the checkout instead, use `docker compose up -d --build`.
 
 The admin UI is at `https://<CUPS_SERVER_NAME>:631/admin` and is HTTPS only. Sign in with the `CUPS_ADMIN_USER` account. CUPS uses a self-signed certificate issued to `CUPS_SERVER_NAME`, so expect a browser warning until clients trust it.
 
@@ -34,6 +37,9 @@ The variables `.env` takes, grouped as in `.env.example`. **Required** means the
 
 | Variable | Default | What it does |
 |---|---|---|
+| **Images** | | |
+| `IMAGE_TAG` | `prod` | Which published images to run: the `prod` or `dev` channel, a version such as `v1.2.0`, or one exact monthly build such as `v1.2.0-20261101`. See [Releases and updates](#releases-and-updates). |
+| `IMAGE_REPO` | `ghcr.io/ryansawyer6003/printserver` | Where the images come from. The two images are `<IMAGE_REPO>-cups` and `<IMAGE_REPO>-usage`. Change it only to run your own builds. |
 | **Admin account** | | |
 | `CUPS_ADMIN_USER` | `printadmin` | Account that signs in to `/admin` and `/usage/`. Created inside the container at start, as a member of the CUPS admin group. |
 | `CUPS_ADMIN_PASSWORD` | random | Password for that account, applied on every start. If blank, a random one is generated when the container is created and printed once in `docker logs`. |
@@ -79,6 +85,7 @@ The variables `.env` takes, grouped as in `.env.example`. **Required** means the
 
 When a change takes effect:
 
+- **`IMAGE_TAG`, `IMAGE_REPO`:** run `docker compose pull`, then `docker compose up -d`.
 - **Most values:** run `docker compose up -d`. Compose recreates the containers with the new values.
 - **`SERVICES_*` and `PRINTER_*`:** Docker networks that already exist don't change. Run `docker compose down`, then `docker compose up -d` (see [Changing the layout](#changing-the-layout)).
 - **Backup values:** `scripts/backup.sh` reads `.env` each time it runs. Nothing needs restarting.
@@ -263,6 +270,56 @@ docker exec <container> cat /proc/sys/net/ipv4/ip_forward     # must print 0
 ## Reverse proxy
 
 A reverse proxy in front of the web UI is supported. Add its hostname to `CUPS_SERVER_ALIASES`, and forward to the container over **https** on port 631, because `/admin` requires TLS.
+
+## Releases and updates
+
+The images are built by GitHub Actions and published to GitHub Container Registry as `ghcr.io/ryansawyer6003/printserver-cups` and `ghcr.io/ryansawyer6003/printserver-usage`. They are public and hold no site values: everything site-specific comes from `.env` and the volumes at run time.
+
+### Channels
+
+A server follows a channel through `IMAGE_TAG` in `.env`. The channel is set by the release's tag name:
+
+| Release tag | GitHub release | Channel |
+|---|---|---|
+| `vX.Y.Z`, e.g. `v1.2.0` | Full release | `prod`: the newest of these |
+| `vX.Y.Z-<suffix>`, e.g. `v1.3.0-rc.1` | Pre-release (tick "Set as a pre-release") | `dev`: the newest release of either kind |
+
+The publish workflow refuses a release whose pre-release box doesn't match its name, and tags that fit neither pattern (such as the old `v0.1`).
+
+Every image also gets two version tags: `v1.2.0`, which moves with each monthly rebuild, and `v1.2.0-YYYYMMDD`, which never moves. Pin `IMAGE_TAG` to either to stop following a channel.
+
+### What the workflows do
+
+| Workflow | When | What |
+|---|---|---|
+| **CI** (`.github/workflows/ci.yml`) | Every pull request and push to `main` | Scans files, commit messages and commit identities for site values (`scripts/ci/check-site-values.sh`); runs shellcheck; builds both images and smoke-tests them (`scripts/ci/smoke-test.sh`). Publishes nothing. |
+| **Publish images** (`.github/workflows/publish.yml`) | A release is published; the 1st of each month; by hand | Builds the release and the current `prod` and `dev` releases from scratch on a fresh Debian base, smoke-tests both images of each, and only then pushes them. A failed build or test leaves the channel tags where they were. |
+
+The monthly run is the security rebuild: it picks up Debian's updates without a new release. GitHub disables scheduled workflows in a public repository after 60 days with no commits; if that happens, re-enable it under **Actions → Publish images**, or run it by hand.
+
+The smoke test runs the real entrypoint (so `cupsd.conf` is rendered and checked with `cupsd -t`), checks the Status and Usage links in the CUPS pages, that `/admin` refuses plain http and asks for a login over https, that the container doesn't forward, and runs the unit tests on the image's own Python. It does not test macvlan networking, printing, or the volumes.
+
+### Site-value scan
+
+The scan fails on private addresses outside the placeholder ranges `10.10`, `10.20`, `10.30` and `10.40`, and on domain names other than `example.org` and the public names in `scripts/ci/allowed-domains.txt`. For the values that can't be told apart by pattern (server names, NIC names), add a repository secret **`SITE_DENYLIST`** (Settings → Secrets and variables → Actions) holding them, separated by commas or spaces. The list stays out of the repository, and GitHub masks it in logs. Run the scan locally with `scripts/ci/check-site-values.sh` (add a range such as `origin/main..HEAD` to check commits too).
+
+### Publishing a release
+
+1. Merge to `main` and wait for CI to pass.
+2. On GitHub: **Releases → Draft a new release**, create a tag on `main` (`v1.2.0`, or `v1.3.0-rc.1` with **Set as a pre-release** ticked), and **Publish release**.
+3. **Actions → Publish images** shows the run. Its summary lists every tag pushed and the image digests.
+
+### Updating a server
+
+```bash
+docker compose pull
+docker compose up -d
+docker image prune -f        # remove the images that were replaced
+```
+
+Then run the checks under [Routing](#routing). The repository checkout on the server only needs updating when `docker-compose.yml`, the scripts or the docs change; the images don't depend on it.
+
+**Rolling back:** set `IMAGE_TAG` to the previous version or a dated tag (the release page and the workflow summary list them), then `docker compose pull && docker compose up -d`. Volumes are untouched by an image change.
 
 ## Backups
 

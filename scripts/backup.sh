@@ -237,6 +237,7 @@ cmd_restore() {
         log ".env exists and was left as it is."
     else
         tmp=$(mktemp -d)
+        # shellcheck disable=SC2064  # $tmp is meant to expand now
         trap "rm -rf '$tmp'" EXIT
         restic -v "$tmp:/restore" -- restore "$snap:/data/env" --target /restore
         install -m 600 "$tmp/.env" "$ENV_FILE"
@@ -273,7 +274,7 @@ cmd_restore() {
         restic -v "${names[$i]}:/restore" -- restore "$snap:/data/${VOLUMES[$i]}" --target /restore --delete --verify
     done
     log "Restored ${VOLUMES[*]} from snapshot '$snap'."
-    log "Next: docker compose up -d --build, then the checks in docs/backup.md (\"After a restore\")."
+    log "Next: docker compose up -d, then the checks in docs/backup.md (\"After a restore\")."
 }
 
 cmd_restic() {

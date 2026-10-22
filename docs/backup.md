@@ -107,10 +107,10 @@ Install Docker, mount the backup location, and clone this repository. `.env` doe
 
 ```bash
 sudo RESTIC_REPOSITORY=/mnt/backup/printserver RESTIC_PASSWORD='<password>' scripts/backup.sh restore
-docker compose up -d --build
+docker compose up -d
 ```
 
-This restores `.env` first, then creates and fills both volumes. Restore **before** the first `docker compose up`. If the stack has already been started, CUPS has an empty configuration and may have issued itself a new certificate: stop it and restore with `--force`.
+This restores `.env` first, then creates and fills both volumes. `docker compose up -d` then pulls the images `IMAGE_TAG` names (see the README, "Releases and updates"). Restore **before** the first `docker compose up`. If the stack has already been started, CUPS has an empty configuration and may have issued itself a new certificate: stop it and restore with `--force`.
 
 If the backup location is mounted at a different path than before, correct `RESTIC_REPOSITORY` in the restored `.env`. Then schedule the timer again.
 
