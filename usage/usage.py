@@ -180,6 +180,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     UNIQUE (printer, job_id, ts)
 );
 CREATE INDEX IF NOT EXISTS jobs_month ON jobs (month);
+CREATE INDEX IF NOT EXISTS jobs_job ON jobs (printer, job_id);
 CREATE TABLE IF NOT EXISTS allowances (
     user_key TEXT PRIMARY KEY,
     pages    INTEGER NOT NULL
@@ -187,11 +188,55 @@ CREATE TABLE IF NOT EXISTS allowances (
 """
 
 
+# CUPS can log more than one "total" line for one job. When the scheduler
+# restarts or reloads while a job is active, it writes a "total 0" line for
+# it, and the job's real total follows when it finishes. Lines for the same
+# printer and job number, from the same user, computer and document, within
+# this window are one job. The number alone isn't enough: job numbers start
+# again from 1 on a restored server.
+SAME_JOB_WINDOW = 7 * 86400
+
+# Schema version, in SQLite's user_version. 1: duplicate lines for one job,
+# stored before they were merged on ingest, have been merged.
+DB_VERSION = 1
+
+
 def open_db(path=None):
     db = sqlite3.connect(path or DB_PATH, timeout=30)
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
+    if db.execute("PRAGMA user_version").fetchone()[0] < DB_VERSION:
+        merged = merge_stored_duplicates(db)
+        db.execute(f"PRAGMA user_version = {DB_VERSION}")
+        db.commit()
+        if merged:
+            print(f"merged {merged} duplicate job line(s) recorded before this version", flush=True)
     return db
+
+
+def wins(new, old):
+    """Of two lines for one job, the one with more pages counts; on a tie, the later one."""
+    return (new["pages"], new["ts"]) > (old["pages"], old["ts"])
+
+
+def merge_stored_duplicates(db):
+    """Collapse rows that are one job (see SAME_JOB_WINDOW). Returns how many were removed."""
+    rows = db.execute(
+        "SELECT id, printer, job_id, user_raw, host, title, pages, ts FROM jobs"
+        " ORDER BY printer, job_id, user_raw, host, title, ts, id").fetchall()
+    remove, group, keeper, start = [], None, None, 0
+    for r in rows:
+        key = (r["printer"], r["job_id"], r["user_raw"], r["host"], r["title"])
+        if key == group and r["ts"] - start <= SAME_JOB_WINDOW:
+            if wins(r, keeper):
+                remove.append(keeper["id"])
+                keeper = r
+            else:
+                remove.append(r["id"])
+        else:
+            group, keeper, start = key, r, r["ts"]
+    db.executemany("DELETE FROM jobs WHERE id = ?", [(i,) for i in remove])
+    return len(remove)
 
 
 def month_of(ts, zone):
@@ -199,7 +244,11 @@ def month_of(ts, zone):
 
 
 def ingest(db, zone, log_dir=None):
-    """Read page_log.O then page_log. Returns (months that gained jobs, unreadable lines)."""
+    """Read page_log.O then page_log. Returns (months whose jobs changed, unreadable lines).
+
+    Every pass reads both files whole, so a line already recorded is skipped,
+    and several lines for one job are kept as one row (see SAME_JOB_WINDOW).
+    """
     changed, unreadable = set(), 0
     for name in ("page_log.O", "page_log"):
         path = os.path.join(log_dir or LOG_DIR, name)
@@ -216,13 +265,29 @@ def ingest(db, zone, log_dir=None):
                 unreadable += 1
                 continue
             job["month"] = month_of(job["ts"], zone)
-            cur = db.execute(
-                "INSERT OR IGNORE INTO jobs (printer, job_id, ts, month, user_key, user_name,"
-                " user_raw, pages, host, title, sides, color) VALUES (:printer, :job_id, :ts,"
-                " :month, :user_key, :user_name, :user_raw, :pages, :host, :title, :sides, :color)",
-                job)
-            if cur.rowcount:
+            if db.execute("SELECT 1 FROM jobs WHERE printer = ? AND job_id = ? AND ts = ?",
+                          (job["printer"], job["job_id"], job["ts"])).fetchone():
+                continue                                   # read on an earlier pass
+            same = db.execute(
+                "SELECT id, pages, ts, month FROM jobs WHERE printer = :printer AND job_id = :job_id"
+                " AND user_raw = :user_raw AND host = :host AND title = :title"
+                " AND ts BETWEEN :ts - :window AND :ts + :window ORDER BY ABS(ts - :ts) LIMIT 1",
+                dict(job, window=SAME_JOB_WINDOW)).fetchone()
+            if same is None:
+                db.execute(
+                    "INSERT INTO jobs (printer, job_id, ts, month, user_key, user_name, user_raw,"
+                    " pages, host, title, sides, color) VALUES (:printer, :job_id, :ts, :month,"
+                    " :user_key, :user_name, :user_raw, :pages, :host, :title, :sides, :color)",
+                    job)
                 changed.add(job["month"])
+            elif wins(job, same):
+                # Another line for a job already recorded, and this one counts.
+                db.execute(
+                    "UPDATE jobs SET ts = :ts, month = :month, pages = :pages, user_key = :user_key,"
+                    " user_name = :user_name, sides = :sides, color = :color WHERE id = :id",
+                    dict(job, id=same["id"]))
+                changed.update((same["month"], job["month"]))
+            # Otherwise it is another line for a recorded job that adds nothing.
     db.commit()
     return changed, unreadable
 
