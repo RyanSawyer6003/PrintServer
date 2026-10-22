@@ -106,6 +106,107 @@ class StoreAndReportTests(unittest.TestCase):
         usage.ingest(self.db, MOUNTAIN, self.logs)
         self.assertEqual(self.db.execute("SELECT month FROM jobs").fetchone()[0], "2026-10")
 
+    # A scheduler restart while job 12 is printing: CUPS logs "total 0" for it,
+    # then the real total when the job finishes.
+    RESTART = "lobby|AzureAD\\JaneDoe|12|[09/Oct/2026:16:31:00 +0000]|total|0|10.30.3.139|one-sided|monochrome|Agenda.docx"
+    FINISHED = "lobby|AzureAD\\JaneDoe|12|[09/Oct/2026:16:33:10 +0000]|total|4|10.30.3.139|one-sided|monochrome|Agenda.docx"
+
+    def jobs(self):
+        return self.db.execute("SELECT job_id, pages, ts, month FROM jobs ORDER BY ts").fetchall()
+
+    def test_restart_line_and_real_total_are_one_job(self):
+        self.write_log("page_log", [self.RESTART, self.FINISHED])
+        changed, _ = usage.ingest(self.db, UTC, self.logs)
+        rows = self.jobs()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["pages"], rows[0]["ts"]),
+                         (4, usage.parse_timestamp("09/Oct/2026:16:33:10 +0000")))
+        self.assertEqual(changed, {"2026-10"})
+        users = {u["key"]: u for u in usage.user_totals(self.db, "2026-10", 0)}
+        self.assertEqual((users["janedoe"]["jobs"], users["janedoe"]["pages"]), (1, 4))
+
+    def test_order_of_the_lines_does_not_matter(self):
+        self.write_log("page_log", [self.FINISHED, self.RESTART])
+        usage.ingest(self.db, UTC, self.logs)
+        self.assertEqual([tuple(r)[:2] for r in self.jobs()], [(12, 4)])
+
+    def test_lines_split_across_the_rotated_log_are_one_job(self):
+        self.write_log("page_log.O", [self.RESTART])
+        self.write_log("page_log", [self.FINISHED])
+        usage.ingest(self.db, UTC, self.logs)
+        self.assertEqual([tuple(r)[:2] for r in self.jobs()], [(12, 4)])
+
+    def test_merged_job_stays_merged_on_later_passes(self):
+        self.write_log("page_log", [self.RESTART, self.FINISHED])
+        usage.ingest(self.db, UTC, self.logs)
+        for _ in range(2):
+            changed, _ = usage.ingest(self.db, UTC, self.logs)
+            self.assertEqual((self.count(), changed), (1, set()))
+
+    def test_restart_line_already_stored_is_replaced_by_the_real_total(self):
+        # The minute-by-minute service sees the restart line on one pass and
+        # the finished line on a later one.
+        self.write_log("page_log", [self.RESTART])
+        usage.ingest(self.db, UTC, self.logs)
+        self.write_log("page_log", [self.RESTART, self.FINISHED])
+        changed, _ = usage.ingest(self.db, UTC, self.logs)
+        self.assertEqual(([tuple(r)[:2] for r in self.jobs()], changed), ([(12, 4)], {"2026-10"}))
+
+    def test_job_finishing_in_the_next_month_moves_to_that_month(self):
+        restart = "lobby|jdoe|30|[31/Oct/2026:23:59:00 +0000]|total|0|h|-|-|Report"
+        finished = "lobby|jdoe|30|[01/Nov/2026:00:02:00 +0000]|total|9|h|-|-|Report"
+        self.write_log("page_log", [restart])
+        usage.ingest(self.db, UTC, self.logs)
+        self.write_log("page_log", [restart, finished])
+        changed, _ = usage.ingest(self.db, UTC, self.logs)
+        self.assertEqual([(r["pages"], r["month"]) for r in self.jobs()], [(9, "2026-11")])
+        self.assertEqual(changed, {"2026-10", "2026-11"})   # both months' reports are rewritten
+
+    def test_a_job_with_only_a_zero_total_still_counts_as_a_job(self):
+        # A job cancelled before it printed.
+        self.write_log("page_log", [self.RESTART])
+        usage.ingest(self.db, UTC, self.logs)
+        self.assertEqual([tuple(r)[:2] for r in self.jobs()], [(12, 0)])
+
+    def test_a_reused_job_number_is_a_separate_job(self):
+        # Job numbers start again from 1 on a restored server.
+        self.write_log("page_log", [
+            "lobby|jdoe|3|[02/Oct/2026:15:00:00 +0000]|total|2|h|-|-|Minutes",
+            "lobby|jdoe|3|[20/Oct/2026:15:00:00 +0000]|total|2|h|-|-|Minutes",   # same job, too far apart
+            "lobby|jdoe|3|[02/Oct/2026:15:05:00 +0000]|total|1|h|-|-|Flyer",     # a different document
+            "lobby|sam|3|[02/Oct/2026:15:06:00 +0000]|total|1|h|-|-|Minutes",    # a different person
+            "annex|jdoe|3|[02/Oct/2026:15:07:00 +0000]|total|1|h|-|-|Minutes",   # a different printer
+        ])
+        usage.ingest(self.db, UTC, self.logs)
+        self.assertEqual(self.count(), 5)
+
+    def test_duplicates_stored_by_an_earlier_version_are_merged_once(self):
+        path = os.path.join(self.tmp.name, "old.db")
+        old = usage.open_db(path)
+        old.execute("PRAGMA user_version = 0")
+        insert = ("INSERT INTO jobs (printer, job_id, ts, month, user_key, user_name, user_raw, pages,"
+                  " host, title) VALUES (?, ?, ?, '2026-10', 'janedoe', 'JaneDoe', 'AzureAD\\JaneDoe', ?, 'h', 'Doc')")
+        old.executemany(insert, [("lobby", 12, 1000, 0), ("lobby", 12, 1100, 4),   # one job
+                                 ("lobby", 12, 1200, 0),                            # a later restart line
+                                 ("lobby", 13, 1300, 2)])                           # another job
+        old.commit()
+        old.close()
+
+        db = usage.open_db(path)
+        self.addCleanup(db.close)
+        rows = db.execute("SELECT job_id, pages, ts FROM jobs ORDER BY ts").fetchall()
+        self.assertEqual([tuple(r) for r in rows], [(12, 4, 1100), (13, 2, 1300)])
+        self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], usage.DB_VERSION)
+
+        # The merge runs once: rows written afterwards are left alone.
+        db.execute(insert, ("annex", 5, 2000, 1))
+        db.execute(insert, ("annex", 5, 2001, 1))
+        db.commit()
+        db.close()
+        again = usage.open_db(path)
+        self.addCleanup(again.close)
+        self.assertEqual(again.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 4)
+
     def test_report_flags_people_over_allowance_and_honours_overrides(self):
         self.write_log("page_log", [
             "lobby|AzureAD\\JaneDoe|1|[02/Oct/2026:15:00:00 +0000]|total|40|h1|one-sided|color|A",
