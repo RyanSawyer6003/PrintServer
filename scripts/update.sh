@@ -138,7 +138,9 @@ cmd_run() {
     for ref in "${refs[@]}"; do before[$ref]=$(image_id "$ref"); done
 
     log "pulling: ${refs[*]}"
-    compose pull --quiet || die "pull failed; nothing was changed"
+    # --policy always: the compose file says "missing", which a plain pull honours,
+    # so it would skip any image already on the host and never see a new build.
+    compose pull --policy always --quiet || die "pull failed; nothing was changed"
 
     for ref in "${refs[@]}"; do
         new=$(image_id "$ref")

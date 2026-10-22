@@ -7,7 +7,7 @@ Dockerized CUPS print server. The container has two macvlan network legs: one fa
 ```bash
 git clone <this repo> && cd <repo>
 cp .env.example .env        # fill in real values; .env is gitignored
-docker compose pull         # the published images for IMAGE_TAG (default: prod)
+docker compose pull --policy always   # the published images for IMAGE_TAG (default: prod)
 docker compose up -d
 docker logs <CUPS_CONTAINER_NAME>
 docker ps                   # STATUS should show (healthy) within ~1 minute
@@ -87,7 +87,7 @@ The variables `.env` takes, grouped as in `.env.example`. **Required** means the
 
 When a change takes effect:
 
-- **`IMAGE_TAG`, `IMAGE_REPO`:** run `docker compose pull`, then `docker compose up -d`.
+- **`IMAGE_TAG`, `IMAGE_REPO`:** run `docker compose pull --policy always`, then `docker compose up -d`.
 - **Most values:** run `docker compose up -d`. Compose recreates the containers with the new values.
 - **`SERVICES_*` and `PRINTER_*`:** Docker networks that already exist don't change. Run `docker compose down`, then `docker compose up -d` (see [Changing the layout](#changing-the-layout)).
 - **Backup values:** `scripts/backup.sh` reads `.env` each time it runs. Nothing needs restarting.
@@ -327,7 +327,7 @@ sudo scripts/update.sh status           # for monitoring: exit 0 if current, 1 i
 
 See [docs/deploy.md](docs/deploy.md#12-set-up-monthly-updates). The repository checkout on the server only needs updating when `docker-compose.yml`, the scripts or the docs change; the images don't depend on it.
 
-**Rolling back:** set `IMAGE_TAG` to the previous version or a dated tag (the release page and the workflow summary list them), then `docker compose pull && docker compose up -d`. Volumes are untouched by an image change.
+**Rolling back:** set `IMAGE_TAG` to the previous version or a dated tag (the release page and the workflow summary list them), then `docker compose pull --policy always && docker compose up -d`. Volumes are untouched by an image change.
 
 ## Backups
 

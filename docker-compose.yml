@@ -1,8 +1,10 @@
 # Images come from GitHub Container Registry, built and tested by the publish
 # workflow. IMAGE_TAG in .env picks the channel (prod or dev) or pins a version.
-# Update with "docker compose pull && docker compose up -d". "--build" still
-# builds from this checkout instead, under the same image name, for testing;
-# the next pull replaces it.
+# Update with scripts/update.sh, or by hand with
+# "docker compose pull --policy always && docker compose up -d": a plain
+# "docker compose pull" follows pull_policy below and skips images already here.
+# "--build" builds from this checkout instead, under the same image name, for
+# testing; the next pull replaces it.
 services:
   cups:
     image: ${IMAGE_REPO:-ghcr.io/ryansawyer6003/printserver}-cups:${IMAGE_TAG:-prod}
