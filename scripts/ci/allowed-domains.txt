@@ -1,0 +1,9 @@
+# Public names that may appear in tracked files (checked by check-site-values.sh).
+# One per line; subdomains of an entry are allowed too. Never add a site's own names.
+github.com
+ghcr.io
+googleapis.com
+restic.net
+debian.org
+docker.com
+cups.org

@@ -1,5 +1,12 @@
+# Images come from GitHub Container Registry, built and tested by the publish
+# workflow. IMAGE_TAG in .env picks the channel (prod or dev) or pins a version.
+# Update with "docker compose pull && docker compose up -d". "--build" still
+# builds from this checkout instead, under the same image name, for testing;
+# the next pull replaces it.
 services:
   cups:
+    image: ${IMAGE_REPO:-ghcr.io/ryansawyer6003/printserver}-cups:${IMAGE_TAG:-prod}
+    pull_policy: missing
     build: .
     container_name: ${CUPS_CONTAINER_NAME:-cups}
     # CUPS issues its self-signed certificate to this name, so it must be the
@@ -42,6 +49,8 @@ services:
   # reports and the staff page. Report only: it has no network access and cannot
   # see or change print jobs.
   usage:
+    image: ${IMAGE_REPO:-ghcr.io/ryansawyer6003/printserver}-usage:${IMAGE_TAG:-prod}
+    pull_policy: missing
     build: ./usage
     container_name: ${USAGE_CONTAINER_NAME:-cups-usage}
     environment:

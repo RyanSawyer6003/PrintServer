@@ -1,0 +1,77 @@
+# Checks every pull request and every push to main. Publishes nothing.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  site-values:
+    name: No site values
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan files, commit messages and identities
+        env:
+          # Real values that must never be committed. A repository secret, so
+          # the list itself stays out of the repo; empty on forks.
+          SITE_DENYLIST: ${{ secrets.SITE_DENYLIST }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            range="$BASE..$HEAD"
+          else
+            range="$HEAD^!"        # new branch or unknown base: the last commit only
+          fi
+          scripts/ci/check-site-values.sh "$range"
+
+  shellcheck:
+    name: Shell scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: shellcheck
+        run: |
+          shellcheck --version | head -n 2
+          git ls-files -z '*.sh' | xargs -0 shellcheck -S warning
+
+  images:
+    name: Build and test (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: cups
+            context: .
+          - image: usage
+            context: ./usage
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: docker build --pull -t "printserver-${{ matrix.image }}:ci" "${{ matrix.context }}"
+
+      - name: Smoke test
+        run: scripts/ci/smoke-test.sh "${{ matrix.image }}" "printserver-${{ matrix.image }}:ci"
