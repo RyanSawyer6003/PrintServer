@@ -18,7 +18,7 @@ A queue can be addressed in four ways. All four point at the same queue:
 
 | Form | Used by |
 |---|---|
-| `https://<server>:631/printers/<queue>` | Windows, with `Add-Printer -IppURL` (the recommended method below). Encrypted. The device must trust the server's certificate. |
+| `https://<server>:631/printers/<queue>` | Windows, with `Add-Printer -IppURL` (the method below). Encrypted. The device must trust the server's certificate. |
 | `http://<server>:631/printers/<queue>` | Not recommended. Unencrypted: print data crosses the network in the clear. |
 | `ipp://<server>:631/printers/<queue>` | macOS, Linux, ChromeOS. Unencrypted. |
 | `ipps://<server>:631/printers/<queue>` | macOS, Linux, ChromeOS, encrypted. The device must trust the server's certificate. |
@@ -65,7 +65,9 @@ Choose queue names people can recognise, such as a room or area. The Windows met
 
 ## Windows
 
-Install printers with **`Add-Printer -IppURL`** over `https`. It is the only Windows method that reads the queue's capabilities from the server: whether the printer is color or mono, two-sided printing, trays and paper sizes. Those come from the queue, so the queue must be built from the printer ([deploy.md, step 8](deploy.md#8-add-the-printers)). A queue that reports "Generic IPP Everywhere Printer" shows up on Windows as a color printer with no two-sided option, whatever the printer really is.
+Install every printer with **`Add-Printer -IppURL`** over `https`, **from an elevated PowerShell or as SYSTEM** (an RMM or Intune). It is the only Windows method that reads the queue's capabilities from the server: whether the printer is color or mono, two-sided printing, trays and paper sizes.
+
+Those capabilities come from the queue, so the queue must be an IPP Everywhere queue built from the printer ([deploy.md, step 8](deploy.md#8-add-the-printers)). A queue added from printer discovery, or over AppSocket, LPD or Raw, shows up on Windows as a color printer with no two-sided option, whatever the printer really is.
 
 ### Trust the server's certificate
 
@@ -89,9 +91,10 @@ The certificate must name the full server name (`<server>`), not a short host na
 
 ### Quickest: one printer
 
-PowerShell, as an administrator or as SYSTEM, on a device that trusts the certificate. **Verified** from an elevated session and from an RMM script.
+PowerShell, elevated or as SYSTEM, on a device that trusts the certificate. **Verified** from an elevated session and from an RMM script.
 
 ```powershell
+# Elevated
 $queue  = "<queue>"
 $before = (Get-Printer).Name
 Add-Printer -IppURL "https://<server>:631/printers/$queue"
@@ -111,12 +114,12 @@ Then:
 
 ### Things to know
 
-- **Administrator rights are needed.** `-IppURL` doesn't work for a standard user. Deploy from an RMM or Intune running as SYSTEM, or from an elevated session.
+- **Run it elevated.** `-IppURL` needs administrator rights and doesn't work for a standard user. Deploy from an RMM or Intune running as SYSTEM, or from an elevated session.
 - **The printer is installed for the whole device.** Every user of that computer sees it. Jobs are still recorded under the name of the person printing.
 - **The port is named `WSD-<GUID>`.** It doesn't contain the server or queue name, so a printer can't be traced back to its queue from the port. Name each printer after its queue so the name is the link.
-- **Rename after every install.** Without the rename, every printer from the server gets a name from its model, and printers of the same model are told apart only by a number.
+- **Rename after every install.** Windows names the printer after the model the queue reports, which is currently `Printer - IPP Everywhere` for every queue because of a CUPS bug (README, [known limitations](../README.md#known-poc-limitations)). Without the rename, every printer from the server would have that name, told apart only by a number.
 - **Capabilities are read once, at install.** After a queue is rebuilt or changed on the server, remove the printer and install it again.
-- **Avoid `Add-Printer -PortName "https://..."`** and **Settings → Add device → Select a shared printer by name**. Both create a legacy *Internet Port*, which sends jobs but never reads the queue's capabilities: every printer shows as color, one-sided, with no two-sided option. Printers installed that way should be removed and installed again with `-IppURL`.
+- **Don't use `Add-Printer -PortName "https://..."`** or **Settings → Add device → Select a shared printer by name**. Both create a legacy *Internet Port*, which sends jobs but never reads the queue's capabilities: every printer shows as color, one-sided, with no two-sided option. Printers installed that way should be removed and installed again with `-IppURL`.
 - **`https://` fails if the certificate isn't trusted, or doesn't carry the full server name.** The error doesn't say why; check the certificate first (above, and [Troubleshooting](#troubleshooting)).
 - **LPR/LPD, raw port 9100, and Standard TCP/IP ports don't work.** The server only accepts IPP on port 631.
 
