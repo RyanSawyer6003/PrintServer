@@ -111,15 +111,30 @@ Start-Process "https://direct.example.org:631/admin"      # a certificate warnin
 
 ## 8. Add the printers
 
-In the web interface: **Administration → Add Printer**. Or from the server:
+**Recommended: connect over IPP and choose Generic → IPP Everywhere.** CUPS then asks the printer what it supports (color or mono, two-sided, trays, paper sizes) and builds the queue from the answer. Windows reads those capabilities from the queue when a printer is installed, so this is what makes a mono printer show as mono and two-sided printing appear on clients. Most network printers from the last ten years support it.
+
+### In the web interface
+
+1. **Administration → Add Printer**, sign in with the admin account.
+2. Under **Other Network Printers**, choose **Internet Printing Protocol (ipp)**.
+3. **Connection:** `ipp://<printer address>/ipp/print`, for example `ipp://10.20.20.31/ipp/print`. If the printer rejects that path, try `ipp://<printer address>/ipp`; the printer's own web page usually lists its IPP address.
+4. **Name** (the queue name), **Description** and **Location**. Leave sharing off.
+5. **Make:** Generic. **Model:** IPP Everywhere. The printer must be on and reachable now, because CUPS queries it at this step.
+6. **Set Default Options:** set two-sided (Duplex) and, for color printers, the color mode you want as the default.
+
+**Choose IPP Everywhere only with an `ipp://` (or `ipps://`) connection.** With **AppSocket/HP JetDirect** (`socket://`), **LPD** or an `http://` address, CUPS can't query the printer, and the same Generic → IPP Everywhere choice silently produces a generic queue: Windows then shows every printer as color with no two-sided option. A **Raw** queue has the same problem.
+
+### From the server
 
 ```bash
-# A printer that supports IPP Everywhere (most network printers from the last ten years)
+# A printer that supports IPP Everywhere (the recommended way)
 sudo docker compose exec cups lpadmin -p lib-copier -E \
   -v ipp://10.20.20.31/ipp/print -m everywhere \
   -D "Library copier" -L "Building A, Room 112"
+sudo docker compose exec cups lpadmin -p lib-copier -o Duplex=DuplexNoTumble    # two-sided by default
 
-# Otherwise: raw port 9100 with a driver. Find one with:
+# A printer without IPP Everywhere: its own driver on raw port 9100, never Generic or Raw.
+# Find the driver with:
 #   sudo docker compose exec cups lpinfo -m | grep -i <model>
 sudo docker compose exec cups lpadmin -p office-laser -E \
   -v socket://10.20.20.32:9100 -m <driver> \
@@ -128,9 +143,27 @@ sudo docker compose exec cups lpadmin -p office-laser -E \
 sudo docker compose exec cups lpstat -v                            # the queues and their addresses
 ```
 
+### Check every queue
+
+```bash
+# The model each queue reports: the printer's own model, never "Generic IPP Everywhere Printer" or "Local Raw Printer"
+sudo docker compose exec -T cups lpstat -e | while read -r q; do
+  printf '%s: ' "$q"
+  sudo docker compose exec -T cups lpoptions -p "$q" </dev/null | grep -o "printer-make-and-model='[^']*'"
+done
+
+# What clients will be offered for one queue: Duplex and ColorModel choices
+sudo docker compose exec cups lpoptions -p lib-copier -l | grep -Ei 'duplex|color'
+```
+
+A queue that shows `Generic IPP Everywhere Printer` or `Local Raw Printer` was built without asking the printer. Rebuild it in place with the `lpadmin ... -v ipp://... -m everywhere` line above (same queue name, so its usage history and client installs keep working), or in the web interface with **Modify Printer** and the steps above. Then reinstall it on any client that already has it: Windows only reads a printer's capabilities when it is installed.
+
+Notes:
+
 - The queue name (`-p`) is what clients see as the printer's name. Letters, digits, `-` and `_`.
 - Always set a description (`-D`) and a location (`-L`). The staff page lists printers by location, and users tell printers apart by them.
-- `-m everywhere` asks the printer for its capabilities, so the printer must be on and reachable when the queue is added.
+- **Set defaults through the queue's own options** (`-o Duplex=DuplexNoTumble`, `-o ColorModel=Gray`) or **Set Default Options** in the web interface. Don't use `-o sides-default=...` on these queues: it adds a second, conflicting default that clients may ignore.
+- IPP Everywhere reads the printer once, when the queue is built. If the printer gains a duplex unit or a tray later, rebuild the queue.
 - Within a few minutes, `/status/` shows each printer as up or down.
 
 ## 9. Have clients trust the certificate
@@ -161,15 +194,16 @@ Then send it to the clients' trusted root store: with Intune, a **Trusted certif
 
 ## 10. Install printers on clients
 
-On Windows, run as an administrator or as SYSTEM (from an RMM, for example). The printer is installed for every user of the machine:
+On Windows, install with `Add-Printer -IppURL`, run as an administrator or as SYSTEM (from an RMM, for example). It is the only Windows method that reads the queue's capabilities, so color, mono and two-sided printing show correctly. The install finishes in the background and Windows names the printer after the model, so wait for it and rename it to the queue name. The printer is installed for every user of the machine:
 
 ```powershell
-Add-Printer -Name "lib-copier" `
-  -PortName "https://direct.example.org:631/printers/lib-copier" `
-  -DriverName "Microsoft IPP Class Driver"
+$before = (Get-Printer).Name
+Add-Printer -IppURL "https://direct.example.org:631/printers/lib-copier"
+do { Start-Sleep 5; $new = Get-Printer | Where-Object { $_.Name -notin $before -and $_.PortName -like "WSD-*" } } until ($new)
+Rename-Printer -Name $new.Name -NewName "lib-copier"
 ```
 
-Print a test page, then open `https://direct.example.org:631/usage/` and confirm the job appears under the real user's name.
+Print a test page, check that Printing Preferences offers two-sided printing (and no color choice on a mono printer), then open `https://direct.example.org:631/usage/` and confirm the job appears under the real user's name.
 
 [client-setup.md](client-setup.md) covers macOS, Linux and ChromeOS, installing several queues by script, and troubleshooting.
 
@@ -232,9 +266,9 @@ A missed run (the host was off) waits until the next month rather than restartin
 - [ ] `.env` filled in, `chmod 600`
 - [ ] Both containers healthy; default route via `SERVICES_GATEWAY`; forwarding `0`
 - [ ] Staff page loads from a client; `/admin` accepts the admin login
-- [ ] Printers added, each with a description and a location; all up on `/status/`
+- [ ] Printers added over `ipp://` as Generic → IPP Everywhere (or with their own driver), each with a description and a location; no queue reports "Generic IPP Everywhere Printer" or "Local Raw Printer"; all up on `/status/`
 - [ ] Certificate checked (full name, `CA:FALSE`), fingerprint recorded, trusted by clients
-- [ ] A client prints over `https`, and the job shows on `/usage/` under the right user
+- [ ] A Windows client installed with `Add-Printer -IppURL` shows the right color and two-sided options, prints over `https`, and the job shows on `/usage/` under the right user
 - [ ] Backup initialized, checked, and on its nightly timer; password stored away from the server
 - [ ] Monthly update run once by hand and on its timer
 - [ ] Monitoring runs `scripts/backup.sh status` and `scripts/update.sh status`
