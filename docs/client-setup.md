@@ -18,8 +18,8 @@ A queue can be addressed in four ways. All four point at the same queue:
 
 | Form | Used by |
 |---|---|
-| `https://<server>:631/printers/<queue>` | Windows (the recommended method below). Encrypted. The device must trust the server's certificate. |
-| `http://<server>:631/printers/<queue>` | Windows on a device that doesn't trust the certificate. Unencrypted: print data crosses the network in the clear. |
+| `https://<server>:631/printers/<queue>` | Windows, with `Add-Printer -IppURL` (the recommended method below). Encrypted. The device must trust the server's certificate. |
+| `http://<server>:631/printers/<queue>` | Not recommended. Unencrypted: print data crosses the network in the clear. |
 | `ipp://<server>:631/printers/<queue>` | macOS, Linux, ChromeOS. Unencrypted. |
 | `ipps://<server>:631/printers/<queue>` | macOS, Linux, ChromeOS, encrypted. The device must trust the server's certificate. |
 
@@ -65,7 +65,7 @@ Choose queue names people can recognise, such as a room or area. The Windows met
 
 ## Windows
 
-Windows prints to the server over `https` once the device trusts the server's certificate, and over `http` otherwise. Use `https`: with `http`, documents cross the network, and any links between sites, unencrypted.
+Install printers with **`Add-Printer -IppURL`** over `https`. It is the only Windows method that reads the queue's capabilities from the server: whether the printer is color or mono, two-sided printing, trays and paper sizes. Those come from the queue, so the queue must be built from the printer ([deploy.md, step 8](deploy.md#8-add-the-printers)). A queue that reports "Generic IPP Everywhere Printer" shows up on Windows as a color printer with no two-sided option, whatever the printer really is.
 
 ### Trust the server's certificate
 
@@ -89,98 +89,131 @@ The certificate must name the full server name (`<server>`), not a short host na
 
 ### Quickest: one printer
 
-PowerShell, on a device that trusts the certificate. **Verified** from an elevated session.
+PowerShell, as an administrator or as SYSTEM, on a device that trusts the certificate. **Verified** from an elevated session and from an RMM script.
 
 ```powershell
-Add-Printer -Name "<queue>" -PortName "https://<server>:631/printers/<queue>" -DriverName "Microsoft IPP Class Driver"
+$queue  = "<queue>"
+$before = (Get-Printer).Name
+Add-Printer -IppURL "https://<server>:631/printers/$queue"
+
+# The install finishes in the background, usually within a minute or two
+do { Start-Sleep 5; $new = Get-Printer | Where-Object { $_.Name -notin $before -and $_.PortName -like "WSD-*" } } until ($new)
+
+# Windows names the printer after its model; give it the queue's name
+Rename-Printer -Name $new.Name -NewName $queue
+Get-PrintConfiguration -PrinterName $queue | Format-List Color, DuplexingMode
 ```
 
-The printer appears at once with the name given in `-Name`. Print a test page, then check that the job appears in the usage report under the right person.
+Then:
 
-- **As a standard user,** with no elevation: **verified with `http://`**; with `https://`, **verified**.
-- **As SYSTEM,** from an RMM or deployment tool: **verified** with either scheme.
-- **Without a trusted certificate,** use the same command with an `http://` port. **Verified,** including for a standard user.
-
-**Same result without PowerShell.** Go to **Settings → Bluetooth & devices → Printers & scanners → Add device**. Choose **Add manually** (or "The printer that I want isn't listed"), then **Select a shared printer by name**. Enter `https://<server>:631/printers/<queue>`. When asked for a driver, choose **Microsoft**, then **Microsoft IPP Class Driver**. Check the name Windows gives the printer and rename it if needed. **Verified with `http://`; **verified with `https://`.**
+1. Open **Printing Preferences**: a mono printer offers no color choice, and two-sided printing is offered where the printer has a duplexer.
+2. Print a test page, and check that the job appears in the usage report under the right person.
 
 ### Things to know
 
-- **The printer is installed for the whole device**, even when a standard user adds it. Every user of that computer sees it. Jobs are still recorded under the name of the person printing.
+- **Administrator rights are needed.** `-IppURL` doesn't work for a standard user. Deploy from an RMM or Intune running as SYSTEM, or from an elevated session.
+- **The printer is installed for the whole device.** Every user of that computer sees it. Jobs are still recorded under the name of the person printing.
+- **The port is named `WSD-<GUID>`.** It doesn't contain the server or queue name, so a printer can't be traced back to its queue from the port. Name each printer after its queue so the name is the link.
+- **Rename after every install.** Without the rename, every printer from the server gets a name from its model, and printers of the same model are told apart only by a number.
+- **Capabilities are read once, at install.** After a queue is rebuilt or changed on the server, remove the printer and install it again.
+- **Avoid `Add-Printer -PortName "https://..."`** and **Settings → Add device → Select a shared printer by name**. Both create a legacy *Internet Port*, which sends jobs but never reads the queue's capabilities: every printer shows as color, one-sided, with no two-sided option. Printers installed that way should be removed and installed again with `-IppURL`.
 - **`https://` fails if the certificate isn't trusted, or doesn't carry the full server name.** The error doesn't say why; check the certificate first (above, and [Troubleshooting](#troubleshooting)).
-- **The scheme is part of the printer.** A printer added with `http://` keeps using `http://` after the certificate is trusted. To move it to `https://`, remove it and add it again.
-- **The driver must already be on the device.** Check with `Get-PrinterDriver -Name "Microsoft IPP Class Driver"`. A standard user can't add a driver. If it's missing, add it once from an elevated session with `Add-PrinterDriver -Name "Microsoft IPP Class Driver"`.
-- **Avoid `Add-Printer -IppURL`** and the "Add a printer using an IP address or hostname" option for this server. They need administrator rights, take minutes to finish, name every printer "Generic IPP Everywhere Printer", and use a `WSD-<GUID>` port that can't be traced back to a queue.
 - **LPR/LPD, raw port 9100, and Standard TCP/IP ports don't work.** The server only accepts IPP on port 631.
 
 ### Check and remove
 
 ```powershell
-# Which printers go through the server, and whether they use https
+# Printers installed the recommended way (IPP class driver on a WSD port).
+# This also lists IPP printers added directly rather than through the server.
+Get-Printer | Where-Object { $_.PortName -like "WSD-*" -and $_.DriverName -eq "Microsoft IPP Class Driver" } |
+    Format-Table Name, PortName -AutoSize
+
+# Older installs on an Internet Port, to remove and install again with -IppURL
 Get-Printer | Where-Object PortName -like "*://<server>:631/printers/*" |
-    Format-Table Name, PortName, DriverName -AutoSize
+    Format-Table Name, PortName -AutoSize
 
 # Remove one
 Remove-Printer -Name "<queue>"
 ```
 
-Printers on a bare IP address or a `WSD-...` port do not go through the server, and their jobs won't appear in the usage reports.
+Printers on a bare IP address or a Standard TCP/IP port do not go through the server, and their jobs won't appear in the usage reports.
 
 ### Script: several printers
 
-Install script for any deployment tool (Intune, an RMM, a logon script). It can be run any number of times: it adds missing queues and never removes or renames anything. With `$Scheme = "https"` it first checks that the device trusts the server's certificate, and stops without adding anything if not, so a device that hasn't received the certificate yet doesn't end up with printers that can't print. ** verified as a script.** The `Add-Printer` command inside it is verified from an user session.
+Install script for any deployment tool that runs as SYSTEM (Intune, an RMM). It can be run any number of times: it adds missing queues, one at a time so each new printer can be matched to its queue, and renames each to its queue name. It first checks that the device trusts the server's certificate, and stops without adding anything if not. A printer with the queue's name on the server's own Internet Port (an older install) is replaced; a printer with that name on any other port, such as a direct-IP printer, is reported and left alone. **Not yet verified as written;** the single-printer version it is based on is verified from an RMM.
+
 ```powershell
 # Install-PrintQueues.ps1
 $Server     = "<server>"
-$Scheme     = "https"                    # "http" only for devices that don't trust the certificate
 $Thumbprint = "<certificate thumbprint>" # the server certificate's SHA-1 thumbprint, no spaces
 $Queues     = @("<queue1>", "<queue2>")
 $Driver     = "Microsoft IPP Class Driver"
+$TimeoutSec = 300                        # the install finishes in the background
 
-if ($Scheme -eq "https" -and -not (Test-Path "Cert:\LocalMachine\Root\$Thumbprint")) {
+if (-not (Test-Path "Cert:\LocalMachine\Root\$Thumbprint")) {
     Write-Output "The server's certificate isn't in this device's trusted root store yet; nothing added."
     exit 1
 }
 
-if (-not (Get-PrinterDriver -Name $Driver -ErrorAction SilentlyContinue)) {
-    try   { Add-PrinterDriver -Name $Driver -ErrorAction Stop }      # needs elevation
-    catch { Write-Output "Driver '$Driver' is missing and could not be added: $($_.Exception.Message)"; exit 1 }
-}
-
 $problems = @()
 foreach ($q in $Queues) {
-    $port     = "${Scheme}://${Server}:631/printers/$q"
+    $url      = "https://${Server}:631/printers/$q"
     $existing = Get-Printer -Name $q -ErrorAction SilentlyContinue
     if ($existing) {
-        if ($existing.PortName -ne $port) { $problems += "$q : name already used by a printer on port $($existing.PortName)" }
+        if ($existing.PortName -like "WSD-*" -and $existing.DriverName -eq $Driver) { continue }
+        if ($existing.PortName -in @($url, "http://${Server}:631/printers/$q")) {
+            # An older Internet Port install of this queue: no capabilities, so reinstall it
+            try   { Remove-Printer -Name $q -ErrorAction Stop }
+            catch { $problems += "$q : couldn't remove the old Internet Port install: $($_.Exception.Message)"; continue }
+        }
+        else {
+            $problems += "$q : name already used by a printer on port $($existing.PortName)"
+            continue
+        }
+    }
+
+    $before = @(Get-Printer | ForEach-Object Name)
+    try   { Add-Printer -IppURL $url -ErrorAction Stop }
+    catch { $problems += "$q : $($_.Exception.Message)"; continue }
+
+    $new      = @()
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    do {
+        Start-Sleep -Seconds 5
+        $new = @(Get-Printer | Where-Object {
+            $_.Name -notin $before -and $_.PortName -like "WSD-*" -and $_.DriverName -eq $Driver
+        })
+    } while ($new.Count -eq 0 -and (Get-Date) -lt $deadline)
+
+    if ($new.Count -ne 1) {
+        $problems += "$q : expected one new printer within $TimeoutSec seconds, found $($new.Count). If the device already has this queue under another name, remove it and run again."
         continue
     }
-    try   { Add-Printer -Name $q -PortName $port -DriverName $Driver -ErrorAction Stop; Write-Output "Added $q" }
-    catch { $problems += "$q : $($_.Exception.Message)" }
+    try   { if ($new[0].Name -ne $q) { Rename-Printer -Name $new[0].Name -NewName $q -ErrorAction Stop }; Write-Output "Added $q" }
+    catch { $problems += "$q : installed as '$($new[0].Name)' but the rename failed: $($_.Exception.Message)" }
 }
 
 if ($problems) { Write-Output ($problems -join "`n"); exit 1 }
 exit 0
 ```
 
-A printer that already exists under the same name on another port, such as an `http://` port or a direct-IP printer, is reported rather than changed.
+Don't run two copies on one device at the same time: each would see the other's new printer and stop without renaming.
 
-For a deployment tool that runs a detection script first (such as Intune Remediations), use this with the same variables:
+For a deployment tool that runs a detection script first (such as Intune Remediations), use this with the same variables. It checks names only, because the port doesn't identify the queue:
 
 ```powershell
 # Detect-PrintQueues.ps1 - exit 0 when the certificate and every queue are in place, 1 otherwise
-$Server     = "<server>"
-$Scheme     = "https"
 $Thumbprint = "<certificate thumbprint>"
 $Queues     = @("<queue1>", "<queue2>")
 
-if ($Scheme -eq "https" -and -not (Test-Path "Cert:\LocalMachine\Root\$Thumbprint")) {
+if (-not (Test-Path "Cert:\LocalMachine\Root\$Thumbprint")) {
     Write-Output "Certificate not trusted yet"; exit 1
 }
 $missing = $Queues | Where-Object {
     $p = Get-Printer -Name $_ -ErrorAction SilentlyContinue
-    -not $p -or $p.PortName -ne "${Scheme}://${Server}:631/printers/$_"
+    -not $p -or $p.PortName -notlike "WSD-*" -or $p.DriverName -ne "Microsoft IPP Class Driver"
 }
-if ($missing) { Write-Output "Missing: $($missing -join ', ')"; exit 1 }
+if ($missing) { Write-Output "Missing or on an old port: $($missing -join ', ')"; exit 1 }
 exit 0
 ```
 
