@@ -130,6 +130,51 @@ if ! /usr/sbin/cupsd -t -c /etc/cups/cupsd.conf; then
     exit 1
 fi
 
+# --- snmp.conf: printer discovery ----------------------------------------------
+# Rendered on every start, like cupsd.conf. Discovery offers each printer only at
+# its IPP Everywhere address, and broadcasts only on the printer network: the
+# interface that holds PRINTER_IP.
+SNMP_IF=""
+if [ -n "${PRINTER_IP:-}" ]; then
+    SNMP_IF=$(ip -o -4 addr show 2>/dev/null \
+        | awk -v ip="$PRINTER_IP" '{ split($4, a, "/"); if (a[1] == ip) { sub(/@.*/, "", $2); print $2; exit } }')
+fi
+if [[ "$SNMP_IF" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+    SNMP_ADDRESS="@IF($SNMP_IF)"
+else
+    SNMP_ADDRESS="@LOCAL"
+    if [ -n "${PRINTER_IP:-}" ]; then
+        echo "WARNING: no interface holds PRINTER_IP ($PRINTER_IP), so printer discovery"
+        echo "broadcasts on every network the container is on, not only the printer network."
+    fi
+fi
+awk -v address="$SNMP_ADDRESS" '
+    /^Address @SNMP_ADDRESS@$/ { print "Address " address; next }
+    { print }
+' /opt/cups/snmp.conf.template > /etc/cups/snmp.conf
+chown root:lp /etc/cups/snmp.conf
+chmod 644 /etc/cups/snmp.conf
+
+# --- Queues on a connection type this image doesn't support --------------------
+# The image only has the ipp and ipps backends for printing. A queue added
+# before that, on socket://, lpd:// or anything else, can't print: say so here
+# rather than leaving it to show up as stopped queues and stuck jobs.
+if [ -f /etc/cups/printers.conf ]; then
+    awk '
+        /^<(Default)?Printer / { q = $2; sub(/>$/, "", q) }
+        /^DeviceURI /          { s = $2; sub(/:.*/, "", s); print q, s }
+    ' /etc/cups/printers.conf | while read -r q scheme; do
+        case "$scheme" in
+            ipp|ipps) ;;
+            *)
+                echo "WARNING: queue '$q' uses $scheme://, which this server doesn't support, so it"
+                echo "can't print. Rebuild it as IPP Everywhere (same name, so clients are unaffected):"
+                echo "  lpadmin -p '$q' -v ipp://<printer DNS name or IP>/ipp/print -m everywhere"
+                ;;
+        esac
+    done
+fi
+
 # --- Usage reports and staff page ----------------------------------------------
 # CUPS serves the usage reports and the staff page as static files from
 # <DocumentRoot>/usage and <DocumentRoot>/status, where docker-compose mounts

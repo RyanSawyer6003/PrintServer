@@ -1,0 +1,16 @@
+# SNMP configuration for CUPS printer discovery (the snmp backend).
+# Rendered to /etc/cups/snmp.conf by entrypoint.sh at every start: edits made
+# there are replaced. See "man cups-snmp.conf".
+#
+# Address: where discovery broadcasts. The entrypoint fills in the printer
+# network's interface, so discovery never broadcasts on the client-facing
+# network. It falls back to @LOCAL (every interface) only if it can't find the
+# interface that holds PRINTER_IP, and says so in the log.
+Address @SNMP_ADDRESS@
+Community public
+
+# Offer every printer discovery finds only at its IPP Everywhere address. A
+# DeviceURI match is used in place of the backend's own probes, which would
+# offer socket:// (port 9100) or lpd:// (port 515). The image has no backends
+# for those anyway.
+DeviceURI "." ipp://%s/ipp/print

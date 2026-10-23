@@ -8,8 +8,10 @@
 #        the real entrypoint (cupsd.conf rendered and checked with cupsd -t),
 #        the scheduler answering, the Status and Usage links in the CUPS pages
 #        (the navigation patch against Debian's packaged templates), /admin
-#        refusing plain http and asking for a login over https, and the
-#        container not forwarding.
+#        refusing plain http and asking for a login over https, the
+#        container not forwarding, only the ipp/ipps/snmp backends installed
+#        (socket:// refused, ipp:// accepted), and snmp.conf rendered with the
+#        IPP-only discovery rule on the printer interface.
 # usage: the unit tests on the image's own Python, then one ingest-and-render
 #        pass under the restrictions docker-compose.yml runs it with.
 #
@@ -54,6 +56,7 @@ cups)
         -e CUPS_SERVER_NAME="$name_on_cert" \
         -e CUPS_PRINT_SUBNETS=10.30.99.0/24 \
         -e CUPS_ADMIN_SUBNETS=10.30.99.0/24 \
+        -e PRINTER_IP="$ip" \
         -e CUPS_ADMIN_PASSWORD="ci-$(openssl rand -hex 12)" \
         "$image" >/dev/null
 
@@ -86,6 +89,25 @@ cups)
     fwd=$(docker exec "$name" cat /proc/sys/net/ipv4/ip_forward)
     [ "$fwd" = 0 ] || die "ip_forward is $fwd"
     pass "container does not forward"
+
+    backends=$(docker exec "$name" sh -c 'cd /usr/lib/cups/backend && ls -A | sort | tr "\n" " "')
+    [ "$backends" = "ipp ipps snmp " ] || die "backends are '$backends', expected 'ipp ipps snmp '"
+    pass "only the ipp, ipps and snmp backends are installed"
+
+    if out=$(docker exec "$name" lpadmin -p ci-socket -v socket://10.30.99.200:9100 2>&1); then
+        die "a socket:// queue was accepted"
+    fi
+    grep -qi 'device-uri scheme' <<<"$out" || die "socket:// refused for an unexpected reason: $out"
+    docker exec "$name" lpadmin -p ci-ipp -v ipp://10.30.99.201/ipp/print \
+        || die "an ipp:// queue was refused"
+    docker exec "$name" lpadmin -x ci-ipp
+    pass "socket:// queues refused, ipp:// accepted"
+
+    snmp=$(docker exec "$name" cat /etc/cups/snmp.conf)
+    grep -qxF 'DeviceURI "." ipp://%s/ipp/print' <<<"$snmp" || die "snmp.conf has no IPP-only DeviceURI rule"
+    grep -qE '^Address @IF\([A-Za-z0-9_.-]+\)$' <<<"$snmp" \
+        || die "snmp.conf doesn't limit discovery to the printer interface: $(grep '^Address' <<<"$snmp")"
+    pass "snmp.conf: discovery offers only IPP, on $(grep '^Address' <<<"$snmp" | cut -d' ' -f2)"
     ;;
 
 usage)

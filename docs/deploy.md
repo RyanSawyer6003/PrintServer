@@ -45,7 +45,7 @@ Everything site-specific goes in `.env`. Decide these first, because the network
 - **If the host is a VM**, each container network has its own MAC address, so the virtual NIC must accept more than one: VMware needs promiscuous mode and forged transmits on the port group; Hyper-V needs MAC address spoofing. For layouts B and C, the virtual NIC must also pass tagged frames.
 - **DNS:** an A record for `CUPS_SERVER_NAME` pointing to `SERVICES_IP`, resolvable from every client subnet.
 - **Routing and firewall:** every client subnet, at every site, reaches `SERVICES_IP` on 631/tcp.
-- **Printers** can reach the server's `PRINTER_IP`, and the server reaches them on their print ports (9100, 631 or 515).
+- **Printers** can reach the server's `PRINTER_IP`, and the server reaches them on IPP, 631/tcp. That is the only port the server prints on (see [step 8](#8-add-the-printers)).
 
 Isolating the printer network from the LAN comes later, once every client prints through the server (see [13](#13-optional-additions)).
 
@@ -113,12 +113,14 @@ Start-Process "https://direct.example.org:631/admin"      # a certificate warnin
 
 **Add each printer as an IPP Everywhere queue, entering its address by hand: its DNS name or IP address.** CUPS then asks the printer what it supports (color or mono, two-sided, trays, paper sizes) and builds the queue from the answer, and clients read those capabilities from the queue. Most network printers from the last ten years support IPP Everywhere.
 
-**Don't rely on printer discovery for now.** **Find New Printers** and the **Discovered Network Printers** list in the web interface offer printers as AppSocket (`socket://...:9100`) connections, and CUPS can't ask the printer anything over AppSocket. A queue added that way, or as LPD, `http://` or **Raw**, doesn't describe the printer: Windows then shows every printer as color with no two-sided option.
+**The server prints over IPP only.** The image contains no AppSocket (`socket://`, port 9100), LPD, `http://`, USB or other print backends, so the web interface doesn't offer them and CUPS refuses a queue that uses one. A printer without IPP Everywhere support can't be used through this server; leave it on direct printing. A queue on another connection type, from an older install, can't print: the cups container's log names it at every start (`docker compose logs cups`).
+
+**Don't rely on printer discovery for now.** Discovery (**Find New Printers**, and **Discovered Network Printers** under Add Printer) only looks on the printer network and only offers each printer's IPP address, `ipp://<address>/ipp/print`. But it doesn't show that address until you select an entry, and on images built on Debian 13 (the `dev` channel) selecting a discovered entry garbles the Connection field because of a CUPS bug (README, [known limitations](../README.md#known-poc-limitations)). Entering the address by hand avoids both. Find New Printers also hides printers that already have a queue at the same address.
 
 ### In the web interface
 
 1. **Administration → Add Printer**, signed in with the admin account.
-2. Under **Other Network Printers**, choose **Internet Printing Protocol (ipp)**, not a discovered printer.
+2. Under **Other Network Printers**, choose **Internet Printing Protocol (ipp)** rather than a discovered printer.
 3. **Connection:** `ipp://<printer DNS name or IP>/ipp/print`, for example `ipp://10.20.20.31/ipp/print`. If the printer rejects that path, try `ipp://<printer>/ipp`; the printer's own web page usually lists its IPP address.
 4. **Name** (the queue name), **Description** and **Location**. Leave sharing off.
 5. **Make:** Generic. **Model:** IPP Everywhere. The printer must be on and reachable now, because CUPS queries it at this step.
@@ -127,18 +129,11 @@ Start-Process "https://direct.example.org:631/admin"      # a certificate warnin
 ### From the server
 
 ```bash
-# The recommended way: IPP Everywhere, address entered by hand
+# IPP Everywhere, address entered by hand
 sudo docker compose exec cups lpadmin -p lib-copier -E \
   -v ipp://10.20.20.31/ipp/print -m everywhere \
   -D "Library copier" -L "Building A, Room 112"
 sudo docker compose exec cups lpadmin -p lib-copier -o Duplex=DuplexNoTumble    # two-sided by default
-
-# Only for a printer without IPP Everywhere: its own driver on raw port 9100, never Generic or Raw.
-# Find the driver with:
-#   sudo docker compose exec cups lpinfo -m | grep -i <model>
-sudo docker compose exec cups lpadmin -p office-laser -E \
-  -v socket://10.20.20.32:9100 -m <driver> \
-  -D "Front office laser" -L "Building A, Office"
 
 sudo docker compose exec cups lpstat -v                            # the queues and their addresses
 ```
@@ -265,7 +260,7 @@ A missed run (the host was off) waits until the next month rather than restartin
 - [ ] `.env` filled in, `chmod 600`
 - [ ] Both containers healthy; default route via `SERVICES_GATEWAY`; forwarding `0`
 - [ ] Staff page loads from a client; `/admin` accepts the admin login
-- [ ] Printers added as IPP Everywhere queues by DNS name or IP (not from discovery), each with a description and a location; mono printers show `ColorDevice: False`; all up on `/status/`
+- [ ] Printers added as IPP Everywhere queues by DNS name or IP (not from discovery), each with a description and a location; mono printers show `ColorDevice: False`; no queue warning in `docker compose logs cups`; all up on `/status/`
 - [ ] Certificate checked (full name, `CA:FALSE`), fingerprint recorded, trusted by clients
 - [ ] A Windows client installed with `Add-Printer -IppURL` (elevated) shows the right color and two-sided options, prints over `https`, and the job shows on `/usage/` under the right user
 - [ ] Backup initialized, checked, and on its nightly timer; password stored away from the server
