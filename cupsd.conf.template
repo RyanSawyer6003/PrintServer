@@ -51,6 +51,12 @@ WebInterface Yes
     Order deny,allow
   </Limit>
 
+  # No temporary queues (CVE-2026-34990, -39316, -107888, -39314)
+  <Limit CUPS-Create-Local-Printer>
+    Order deny,allow
+    Deny from all
+  </Limit>
+
   <Limit Cancel-Job CUPS-Authenticate-Job>
     Require user @OWNER @SYSTEM
     Order deny,allow
