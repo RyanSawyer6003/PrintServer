@@ -1,6 +1,6 @@
 # Deploying a new server
 
-From an empty host to a server that prints, with backups and monthly updates. Every value here is a placeholder: use your own.
+From an empty host to a server that prints, with backups and monthly updates. Every value here is a placeholder: use your own. Once it runs, [runbook.md](runbook.md) covers the day-to-day tasks.
 
 The steps, in order:
 

@@ -3,6 +3,7 @@
 All names, hosts and printers here are made up.
 """
 
+import csv
 import json
 import os
 import stat
@@ -261,6 +262,82 @@ class StoreAndReportTests(unittest.TestCase):
 def status_queue(name, **extra):
     return dict({"name": name, "description": "", "location": "", "state": "idle", "accepting": True,
                  "jobs": 0, "check": "up", "since": 1000}, **extra)
+
+
+class PrinterNamesTests(unittest.TestCase):
+    """The report names printers by the description and location set on each queue."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.logs = os.path.join(self.tmp.name, "logs")
+        self.out = os.path.join(self.tmp.name, "reports")
+        os.makedirs(self.logs)
+        self.db = usage.open_db(os.path.join(self.tmp.name, "usage.db"))
+        self.addCleanup(self.db.close)
+
+    @staticmethod
+    def status(*queues):
+        return {"checked_at": 1, "interval": 300, "queues": [
+            {"name": n, "description": d, "location": l} for n, d, l in queues]}
+
+    def report(self, lines, status, name="2026-10.html"):
+        with open(os.path.join(self.logs, "page_log"), "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+        usage.ingest(self.db, UTC, self.logs)
+        usage.remember_printers(self.db, status)
+        usage.render(self.db, UTC, 0, 0, only={"2026-10"}, out_dir=self.out)
+        with open(os.path.join(self.out, name), encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_names_are_stored_updated_and_kept_after_removal(self):
+        self.assertTrue(usage.remember_printers(self.db, self.status(("10630", "Library copier", "Building A, Room 112"))))
+        self.assertFalse(usage.remember_printers(self.db, self.status(("10630", "Library copier", "Building A, Room 112"))))
+        self.assertTrue(usage.remember_printers(self.db, self.status(("10630", "Library copier", "Building B, Room 4"))))
+        usage.remember_printers(self.db, self.status(("11824", "Office laser", "Front office")))   # 10630 removed
+        self.assertEqual(usage.printer_names(self.db), {
+            "10630": ("Library copier", "Building B, Room 4"),
+            "11824": ("Office laser", "Front office")})
+        self.assertFalse(usage.remember_printers(self.db, None))     # no status file: nothing changes
+
+    def test_report_lists_printers_by_location_and_description(self):
+        page = self.report(
+            ["10630|jdoe|1|[02/Oct/2026:15:00:00 +0000]|total|5|h|-|-|Minutes",
+             "99999|jdoe|2|[02/Oct/2026:16:00:00 +0000]|total|1|h|-|-|Flyer"],     # never seen in a status file
+            self.status(("10630", "Library copier", "Building A, Room 112")))
+        printers = page[page.index("<h2>By printer</h2>"):page.index("<h2>Jobs")]
+        self.assertIn("<th>Location</th><th>Description</th><th>Queue</th>", printers)
+        self.assertIn("<td>Building A, Room 112</td><td>Library copier</td><td>10630</td>", printers)
+        self.assertIn('<td class="unset">Not set</td><td class="unset">Not set</td><td>99999</td>', printers)
+
+        log = page[page.index("<h2>Jobs"):]
+        self.assertIn('Library copier<span class="sub">Building A, Room 112 · 10630</span>', log)
+        self.assertIn("<td>99999</td>", log)                       # no description: the queue name alone
+
+    def test_names_are_escaped(self):
+        page = self.report(["10630|jdoe|1|[02/Oct/2026:15:00:00 +0000]|total|5|h|-|-|Minutes"],
+                           self.status(("10630", "<b>Copier</b>", "Room & hall")))
+        self.assertIn("&lt;b&gt;Copier&lt;/b&gt;", page)
+        self.assertIn("Room &amp; hall", page)
+        self.assertNotIn("<b>Copier</b>", page)
+
+    def test_csv_downloads_carry_description_and_location(self):
+        self.report(["10630|jdoe|1|[02/Oct/2026:15:00:00 +0000]|total|5|h|-|-|Minutes"],
+                    self.status(("10630", "Library copier", "Building A, Room 112")))
+        with open(os.path.join(self.out, "2026-10-jobs.csv"), encoding="utf-8", newline="") as handle:
+            rows = list(csv.reader(handle))
+        self.assertEqual(rows[0][:5], ["time", "person", "printer", "printer_description", "printer_location"])
+        self.assertEqual(rows[1][2:5], ["10630", "Library copier", "Building A, Room 112"])
+        with open(os.path.join(self.out, "2026-10-printers.csv"), encoding="utf-8", newline="") as handle:
+            rows = list(csv.reader(handle))
+        self.assertEqual(rows, [["printer", "description", "location", "pages", "jobs"],
+                                ["10630", "Library copier", "Building A, Room 112", "5", "1"]])
+
+    def test_a_changed_name_rebuilds_every_month(self):
+        usage.remember_printers(self.db, self.status(("10630", "Library copier", "Room 112")))
+        before = usage.snapshot(self.db, UTC, 0, 0)
+        usage.remember_printers(self.db, self.status(("10630", "Library copier", "Room 114")))
+        self.assertNotEqual(usage.snapshot(self.db, UTC, 0, 0), before)
 
 
 class StaffPageTests(unittest.TestCase):

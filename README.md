@@ -15,6 +15,8 @@ docker ps                   # STATUS should show (healthy) within ~1 minute
 
 **For a new server, follow [docs/deploy.md](docs/deploy.md)**: planning the values, network preparation, adding printers, the certificate, backups and monthly updates, with a checklist at the end.
 
+**For day-to-day tasks on a running server, see [docs/runbook.md](docs/runbook.md)**: printers, allowance overrides, the view-only login, restarts and updates, subnet changes, and what never to change.
+
 The images are built, tested and published by GitHub Actions; see [Releases and updates](#releases-and-updates). To build from the checkout instead, use `docker compose up -d --build`.
 
 The admin UI is at `https://<CUPS_SERVER_NAME>:631/admin` and is HTTPS only. Sign in with the `CUPS_ADMIN_USER` account. CUPS uses a self-signed certificate issued to `CUPS_SERVER_NAME`, so expect a browser warning until clients trust it.
@@ -232,9 +234,11 @@ It is **report only**. No print job is ever blocked or changed. The container ha
 The report shows, for each month:
 
 - pages and jobs per person, against the monthly allowance, with people over it flagged
-- pages and jobs per printer
-- the job log (time, person, printer, pages, sides, color, computer, document name)
-- CSV downloads of the totals and the full job log
+- pages and jobs per printer, with each printer's location and description
+- the job log (time, person, printer, pages, sides, color, computer, document name), with each printer named by its description and location
+- CSV downloads of the totals by person, the totals by printer, and the full job log
+
+Printers are named by the description and location set on each queue (`lpadmin -p <queue> -D ... -L ...`), as on the staff page. The report remembers them, so a printer removed from the server keeps its name in earlier months. A printer with neither set shows "Not set" and its queue name.
 
 Settings in `.env`:
 

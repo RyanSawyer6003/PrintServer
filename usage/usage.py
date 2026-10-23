@@ -181,6 +181,14 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS jobs_month ON jobs (month);
 CREATE INDEX IF NOT EXISTS jobs_job ON jobs (printer, job_id);
+-- Each queue's description and location, as last seen in the printer status
+-- file, so reports can name printers in people's terms, including printers
+-- removed from the server since.
+CREATE TABLE IF NOT EXISTS printers (
+    name        TEXT PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT '',
+    location    TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS allowances (
     user_key TEXT PRIMARY KEY,
     pages    INTEGER NOT NULL
@@ -292,6 +300,33 @@ def ingest(db, zone, log_dir=None):
     return changed, unreadable
 
 
+def remember_printers(db, status):
+    """Store each queue's description and location from the status file.
+
+    A queue that is no longer on the server keeps what was last stored.
+    Returns True if anything changed.
+    """
+    if not status:
+        return False
+    changed = False
+    for q in status["queues"]:
+        cur = db.execute(
+            "INSERT INTO printers (name, description, location) VALUES (?, ?, ?)"
+            " ON CONFLICT(name) DO UPDATE SET description = excluded.description,"
+            " location = excluded.location"
+            " WHERE description IS NOT excluded.description OR location IS NOT excluded.location",
+            (q["name"], q["description"], q["location"]))
+        changed = changed or cur.rowcount > 0
+    db.commit()
+    return changed
+
+
+def printer_names(db):
+    """{queue name: (description, location)} for every queue ever seen."""
+    return {r["name"]: (r["description"], r["location"])
+            for r in db.execute("SELECT name, description, location FROM printers")}
+
+
 # ---------------------------------------------------------------- reporting
 
 CSS = """
@@ -329,6 +364,8 @@ a { color:var(--accent); }
 nav a.here { color:var(--fg); font-weight:600; text-decoration:none; }
 footer { margin-top:36px; color:var(--muted); font-size:13px; }
 .empty { color:var(--muted); padding:14px 12px; }
+.sub { display:block; color:var(--muted); font-size:12px; }
+td.unset { color:var(--muted); }
 """
 
 
@@ -395,6 +432,16 @@ def render_month(db, month, months, zone, default_allowance, unreadable, is_inde
         "SELECT printer, SUM(pages) AS pages, COUNT(*) AS jobs FROM jobs WHERE month = ?"
         " GROUP BY printer ORDER BY pages DESC, printer", (month,)).fetchall()
     jobs = db.execute("SELECT * FROM jobs WHERE month = ? ORDER BY ts DESC, id DESC", (month,)).fetchall()
+    names = printer_names(db)
+
+    def about(queue):
+        return names.get(queue, ("", ""))
+
+    def printer_cell(queue):
+        """The description people know a printer by, with its location and queue name below."""
+        description, location = about(queue)
+        below = " · ".join(x for x in (location, queue if description else "") if x)
+        return esc(description or queue) + (f"<span class=\"sub\">{esc(below)}</span>" if below else "")
 
     total_pages = sum(u["pages"] for u in users)
     over_count = sum(1 for u in users if u["over"])
@@ -421,6 +468,7 @@ def render_month(db, month, months, zone, default_allowance, unreadable, is_inde
     p.append("</nav>")
     p.append("<div class=\"links\"><span>Download:</span>")
     p.append(f"<a href=\"{month}-people.csv\" download>Totals by person (CSV)</a>")
+    p.append(f"<a href=\"{month}-printers.csv\" download>Totals by printer (CSV)</a>")
     p.append(f"<a href=\"{month}-jobs.csv\" download>All jobs this month (CSV)</a>")
     p.append("</div>")
 
@@ -454,10 +502,13 @@ def render_month(db, month, months, zone, default_allowance, unreadable, is_inde
 
     p.append("<h2>By printer</h2>\n<div class=\"scroll\">")
     if printers:
-        p.append("<table><thead><tr><th>Printer</th><th class=\"num\">Pages</th>"
-                 "<th class=\"num\">Jobs</th></tr></thead><tbody>")
+        p.append("<table><thead><tr><th>Location</th><th>Description</th><th>Queue</th>"
+                 "<th class=\"num\">Pages</th><th class=\"num\">Jobs</th></tr></thead><tbody>")
         for r in printers:
-            p.append(f"<tr><td>{esc(r['printer'])}</td><td class=\"num\">{r['pages']:,}</td>"
+            description, location = about(r["printer"])
+            loc = f"<td>{esc(location)}</td>" if location else "<td class=\"unset\">Not set</td>"
+            desc = f"<td>{esc(description)}</td>" if description else "<td class=\"unset\">Not set</td>"
+            p.append(f"<tr>{loc}{desc}<td>{esc(r['printer'])}</td><td class=\"num\">{r['pages']:,}</td>"
                      f"<td class=\"num\">{r['jobs']:,}</td></tr>")
         p.append("</tbody></table>")
     else:
@@ -471,7 +522,7 @@ def render_month(db, month, months, zone, default_allowance, unreadable, is_inde
         p.append("<table><thead><tr><th>Time</th><th>Person</th><th>Printer</th><th class=\"num\">Pages</th>"
                  "<th>Sides</th><th>Color</th><th>Computer</th><th>Document</th></tr></thead><tbody>")
         for r in shown:
-            p.append(f"<tr><td>{esc(local(r['ts']))}</td><td>{esc(r['user_name'])}</td><td>{esc(r['printer'])}</td>"
+            p.append(f"<tr><td>{esc(local(r['ts']))}</td><td>{esc(r['user_name'])}</td><td>{printer_cell(r['printer'])}</td>"
                      f"<td class=\"num\">{r['pages']:,}</td><td>{esc(r['sides'])}</td><td>{esc(r['color'])}</td>"
                      f"<td>{esc(r['host'])}</td><td class=\"doc\">{esc(r['title'])}</td></tr>")
         p.append("</tbody></table>")
@@ -493,10 +544,14 @@ def render_month(db, month, months, zone, default_allowance, unreadable, is_inde
         [(u["name"], u["pages"], u["jobs"], u["allowance"] if u["allowance"] > 0 else "",
           "yes" if u["over"] else "no", local(u["last"], "%Y-%m-%d %H:%M")) for u in users])
     out[f"{month}-jobs.csv"] = csv_text(
-        ["time", "person", "printer", "pages", "sides", "color", "computer", "document",
-         "job_id", "name_as_sent"],
-        [(local(r["ts"], "%Y-%m-%d %H:%M:%S"), r["user_name"], r["printer"], r["pages"], r["sides"],
-          r["color"], r["host"], r["title"], r["job_id"], r["user_raw"]) for r in reversed(jobs)])
+        ["time", "person", "printer", "printer_description", "printer_location", "pages", "sides",
+         "color", "computer", "document", "job_id", "name_as_sent"],
+        [(local(r["ts"], "%Y-%m-%d %H:%M:%S"), r["user_name"], r["printer"], *about(r["printer"]),
+          r["pages"], r["sides"], r["color"], r["host"], r["title"], r["job_id"], r["user_raw"])
+         for r in reversed(jobs)])
+    out[f"{month}-printers.csv"] = csv_text(
+        ["printer", "description", "location", "pages", "jobs"],
+        [(r["printer"], *about(r["printer"]), r["pages"], r["jobs"]) for r in printers])
     return out
 
 
@@ -846,7 +901,9 @@ def snapshot(db, zone, default_allowance, unreadable):
     """Everything besides new jobs that changes what the reports say."""
     allowances = tuple(db.execute("SELECT user_key, pages FROM allowances ORDER BY user_key").fetchall())
     months = tuple(r[0] for r in db.execute("SELECT DISTINCT month FROM jobs ORDER BY month"))
-    return (tuple(tuple(a) for a in allowances), months, default_allowance,
+    printers = tuple(tuple(r) for r in db.execute(
+        "SELECT name, description, location FROM printers ORDER BY name"))
+    return (tuple(tuple(a) for a in allowances), months, printers, default_allowance,
             datetime.now(zone).strftime("%Y-%m"), unreadable)
 
 
@@ -854,6 +911,8 @@ def cycle(state, zone, default_allowance):
     db = open_db()
     try:
         changed, unreadable = ingest(db, zone)
+        status = load_status()
+        remember_printers(db, status)       # a renamed or moved printer rebuilds every month
         snap = snapshot(db, zone, default_allowance, unreadable)
         rebuild = state.get("snapshot") != snap
         if rebuild:
@@ -869,7 +928,7 @@ def cycle(state, zone, default_allowance):
 
         # The staff page is rewritten every cycle too, so it picks up each printer check.
         try:
-            render_staff(db, zone, load_status(), only=None if rebuild else changed)
+            render_staff(db, zone, status, only=None if rebuild else changed)
             problem = None
         except OSError as error:
             problem = f"{type(error).__name__}: {error}"
