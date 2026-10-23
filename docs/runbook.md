@@ -41,42 +41,52 @@ The default route must be through the service network and forwarding must be `0`
 
 ### Add a printer
 
-In the web interface: **Administration → Add Printer** (admin login, over `https`). From the host:
+Add it as an **IPP Everywhere queue, with its address entered by hand** (DNS name or IP). **Don't add printers from discovery for now:** **Find New Printers** and **Discovered Network Printers** offer them as AppSocket (`socket://`) connections, and a queue added that way doesn't describe the printer, so Windows shows it as color with no two-sided option. The full steps are in [deploy.md, step 8](deploy.md#8-add-the-printers).
+
+In the web interface: **Administration → Add Printer** (admin login, over `https`) → **Other Network Printers: Internet Printing Protocol (ipp)** → connection `ipp://<printer DNS name or IP>/ipp/print` → name, description, location → **Make:** Generic, **Model:** IPP Everywhere → **Set Default Options** (two-sided). From the host:
 
 ```bash
-# A printer that supports IPP Everywhere
+# The recommended way: IPP Everywhere, address entered by hand
 sudo docker compose exec cups lpadmin -p <queue> -E \
-  -v ipp://<printer-ip>/ipp/print -m everywhere \
+  -v ipp://<printer DNS name or IP>/ipp/print -m everywhere \
   -D "<description>" -L "<building, room>"
+sudo docker compose exec cups lpadmin -p <queue> -o Duplex=DuplexNoTumble   # two-sided by default
 
-# Otherwise: raw port 9100 with a driver. Find one with:
+# Only for a printer without IPP Everywhere: its own driver on raw port 9100, never Generic or Raw.
+# Find the driver with:
 #   sudo docker compose exec cups lpinfo -m | grep -i <model>
 sudo docker compose exec cups lpadmin -p <queue> -E \
-  -v socket://<printer-ip>:9100 -m <driver> \
+  -v socket://<printer DNS name or IP>:9100 -m <driver> \
   -D "<description>" -L "<building, room>"
+
+# Check: ColorDevice False on a mono printer, and a Duplex option where it has a duplexer
+sudo docker compose exec cups grep -E '^\*ColorDevice' /etc/cups/ppd/<queue>.ppd
+sudo docker compose exec cups lpoptions -p <queue> -l | grep -Ei 'duplex|color'
 ```
 
 - **Choose the queue name carefully.** It is the name clients see and part of the address they install, and CUPS can't rename a queue (see [Rename a printer](#rename-a-printer)).
 - **Always set a description and a location.** The staff page and the usage report list printers by them.
 - **The printer must be on and reachable** when it is added with `-m everywhere`, which asks it for its capabilities.
+- **Set defaults with the queue's own options** (`-o Duplex=...`, `-o ColorModel=Gray`) or **Set Default Options**, not `-o sides-default=...`.
+- **The model name reads `Printer - IPP Everywhere`** on every IPP Everywhere queue. It's a known CUPS bug in the current Debian package and doesn't affect printing; see the README's [known limitations](../README.md#known-poc-limitations).
 
 Then:
 
 1. Check `/status/` shows it as up, within `STATUS_CHECK_MINUTES` (default 5).
-2. Install it on the clients that need it ([client-setup.md](client-setup.md)): `https://<server>:631/printers/<queue>`.
+2. Install it on the clients that need it with `Add-Printer -IppURL "https://<server>:631/printers/<queue>"`, elevated, then rename it to the queue name ([client-setup.md, Windows](client-setup.md#windows)).
 3. Print a test page from a client and check it appears on `/usage/` under the right person.
 
 ### Change a printer
 
-The queue keeps its name, so clients need no change.
+The queue keeps its name, so clients keep printing to it.
 
 ```bash
 sudo docker compose exec cups lpadmin -p <queue> -D "<new description>" -L "<new location>"
-sudo docker compose exec cups lpadmin -p <queue> -v ipp://<new-printer-ip>/ipp/print     # the printer was re-addressed or replaced
-sudo docker compose exec cups lpstat -v <queue>                                            # where it sends jobs now
+sudo docker compose exec cups lpadmin -p <queue> -v ipp://<new printer DNS name or IP>/ipp/print   # the printer was re-addressed
+sudo docker compose exec cups lpstat -v <queue>                                                      # where it sends jobs now
 ```
 
-A replacement printer of a different model may need the queue's driver changed as well: add `-m everywhere` (or `-m <driver>`) to the `-v` command.
+A replacement printer, or one that gained or lost a duplex unit or tray, needs the queue rebuilt from it: `lpadmin -p <queue> -v ipp://<printer>/ipp/print -m everywhere` (or `-m <driver>` for a printer without IPP Everywhere), then set its defaults again. **Then reinstall it on the clients that have it:** Windows reads a printer's capabilities only when it is installed, so remove the printer and install it again with `Add-Printer -IppURL`.
 
 ### Rename a printer
 
