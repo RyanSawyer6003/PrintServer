@@ -15,11 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Remove Notifiers to mitigate CVE-2026-105326 and CVE-2026-34978
-# Remove SNMP to mitigate CVE-2026-41079
 # Remove FOOMATIC-RIP to mitigate CVE-2026-55453 and CVE-2026-55467
 RUN rm -f /usr/lib/cups/notifier/mailto /usr/lib/cups/notifier/rss \
-          /usr/lib/cups/filter/foomatic-rip \
-          /usr/lib/cups/backend/snmp
+          /usr/lib/cups/filter/foomatic-rip
 
 # IPP only: remove every CUPS backend except ipp, ipps (a link to ipp) and snmp.
 # cupsd refuses a device URI whose backend isn't installed, so AppSocket
