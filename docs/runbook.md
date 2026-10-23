@@ -41,23 +41,16 @@ The default route must be through the service network and forwarding must be `0`
 
 ### Add a printer
 
-Add it as an **IPP Everywhere queue, with its address entered by hand** (DNS name or IP). **Don't add printers from discovery for now:** **Find New Printers** and **Discovered Network Printers** offer them as AppSocket (`socket://`) connections, and a queue added that way doesn't describe the printer, so Windows shows it as color with no two-sided option. The full steps are in [deploy.md, step 8](deploy.md#8-add-the-printers).
+Add it as an **IPP Everywhere queue, with its address entered by hand** (DNS name or IP). The server prints over IPP only: AppSocket, LPD and other connection types aren't available, so a printer without IPP Everywhere stays on direct printing. **Don't add printers from discovery for now:** discovered entries don't show their address until selected, and on `dev` (Debian 13) images selecting one garbles the Connection field (a CUPS bug). The full steps are in [deploy.md, step 8](deploy.md#8-add-the-printers).
 
 In the web interface: **Administration → Add Printer** (admin login, over `https`) → **Other Network Printers: Internet Printing Protocol (ipp)** → connection `ipp://<printer DNS name or IP>/ipp/print` → name, description, location → **Make:** Generic, **Model:** IPP Everywhere → **Set Default Options** (two-sided). From the host:
 
 ```bash
-# The recommended way: IPP Everywhere, address entered by hand
+# IPP Everywhere, address entered by hand
 sudo docker compose exec cups lpadmin -p <queue> -E \
   -v ipp://<printer DNS name or IP>/ipp/print -m everywhere \
   -D "<description>" -L "<building, room>"
 sudo docker compose exec cups lpadmin -p <queue> -o Duplex=DuplexNoTumble   # two-sided by default
-
-# Only for a printer without IPP Everywhere: its own driver on raw port 9100, never Generic or Raw.
-# Find the driver with:
-#   sudo docker compose exec cups lpinfo -m | grep -i <model>
-sudo docker compose exec cups lpadmin -p <queue> -E \
-  -v socket://<printer DNS name or IP>:9100 -m <driver> \
-  -D "<description>" -L "<building, room>"
 
 # Check: ColorDevice False on a mono printer, and a Duplex option where it has a duplexer
 sudo docker compose exec cups grep -E '^\*ColorDevice' /etc/cups/ppd/<queue>.ppd
@@ -86,7 +79,7 @@ sudo docker compose exec cups lpadmin -p <queue> -v ipp://<new printer DNS name 
 sudo docker compose exec cups lpstat -v <queue>                                                      # where it sends jobs now
 ```
 
-A replacement printer, or one that gained or lost a duplex unit or tray, needs the queue rebuilt from it: `lpadmin -p <queue> -v ipp://<printer>/ipp/print -m everywhere` (or `-m <driver>` for a printer without IPP Everywhere), then set its defaults again. **Then reinstall it on the clients that have it:** Windows reads a printer's capabilities only when it is installed, so remove the printer and install it again with `Add-Printer -IppURL`.
+A replacement printer, or one that gained or lost a duplex unit or tray, needs the queue rebuilt from it: `lpadmin -p <queue> -v ipp://<printer>/ipp/print -m everywhere`, then set its defaults again. A replacement without IPP Everywhere can't be used through the server. **Then reinstall it on the clients that have it:** Windows reads a printer's capabilities only when it is installed, so remove the printer and install it again with `Add-Printer -IppURL`.
 
 ### Rename a printer
 
