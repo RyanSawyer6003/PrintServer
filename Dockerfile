@@ -14,6 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 
+# Remove Notifiers to mitigate CVE-2026-105326 and CVE-2026-34978
+RUN rm -f /usr/lib/cups/notifier/mailto /usr/lib/cups/notifier/rss
+
 # IPP only: remove every CUPS backend except ipp, ipps (a link to ipp) and snmp.
 # cupsd refuses a device URI whose backend isn't installed, so AppSocket
 # (socket://), LPD, http://, USB, mDNS and the rest can't be added, from the web
