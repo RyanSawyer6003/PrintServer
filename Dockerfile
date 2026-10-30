@@ -40,6 +40,16 @@ COPY snmp.conf.template /opt/cups/snmp.conf.template
 COPY nav-links.sh /opt/printserver/nav-links.sh
 RUN bash /opt/printserver/nav-links.sh
 
+# The print server theme (usage/theme/): added to the end of CUPS's stylesheet,
+# so the CUPS pages look like the staff page and usage reports. CUPS's own
+# rules stay in place underneath; nothing else about the pages changes.
+COPY usage/theme/tokens.css usage/theme/cups.css /opt/printserver/theme/
+RUN css=/usr/share/cups/doc-root/cups.css \
+    && [ -f "$css" ] \
+    && { printf '\n/* --- Print server theme (usage/theme) --- */\n'; \
+         cat /opt/printserver/theme/tokens.css /opt/printserver/theme/cups.css; } >> "$css" \
+    && grep -q -- '--- Print server theme' "$css"
+
 # Printer up/down check, started by the entrypoint. Standard library only.
 COPY status/statuscheck.py /opt/printserver/statuscheck.py
 RUN chmod 755 /opt/printserver/statuscheck.py \

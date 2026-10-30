@@ -7,7 +7,8 @@
 # cups:  the unit tests for the status check, on the image's own Python; then
 #        the real entrypoint (cupsd.conf rendered and checked with cupsd -t),
 #        the scheduler answering, the Status and Usage links in the CUPS pages
-#        (the navigation patch against Debian's packaged templates), /admin
+#        (the navigation patch against Debian's packaged templates), the print
+#        server theme at the end of CUPS's stylesheet, /admin
 #        refusing plain http and asking for a login over https, the
 #        container not forwarding, only the ipp/ipps/snmp backends installed
 #        (socket:// refused, ipp:// accepted), and snmp.conf rendered with the
@@ -77,6 +78,12 @@ cups)
     grep -q 'href="/status/"' <<<"$page" || die "Status link missing from the CUPS navigation bar"
     grep -q 'href="/usage/"' <<<"$page"  || die "Usage link missing from the CUPS navigation bar"
     pass "/printers/ loads; navigation bar has Status and Usage"
+
+    css=$("${c[@]}" "http://$name_on_cert:631/cups.css")
+    grep -q -- '--- Print server theme' <<<"$css" || die "the print server theme is missing from /cups.css"
+    grep -q -- '--ink:' <<<"$css" || die "the theme's color tokens are missing from /cups.css"
+    grep -q 'href="/cups.css"' <<<"$page" || die "the CUPS pages no longer load /cups.css"
+    pass "/cups.css carries the print server theme, and the CUPS pages load it"
 
     code=$("${c[@]}" -o /dev/null -w '%{http_code}' "http://$name_on_cert:631/admin/")
     [ "$code" != 200 ] || die "/admin/ answered over plain http"
