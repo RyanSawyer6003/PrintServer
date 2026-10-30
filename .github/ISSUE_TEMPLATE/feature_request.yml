@@ -1,0 +1,81 @@
+name: Feature request
+description: Suggest a new feature or a change to how the print server works.
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. **This repository is public.** Don't include real
+        hostnames, domains, IP addresses, subnets, VLAN IDs, NIC names, user names, or
+        printer asset IDs. Describe them by role instead ("the printer network",
+        "the service subnet", "a staff device"), or use the `example.org` and
+        `10.10.x.x` / `10.20.x.x` placeholders the docs use.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What is hard, slow, or impossible today? Who runs into it, and how often?
+      placeholder: Level 1 techs can't tell from the staff page which printer in a room is out of toner, so they walk over to check.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should happen instead? Be as specific as you can about what someone would see or do.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Who is it for?
+      multiple: true
+      options:
+        - Staff (people who print)
+        - Level 1 techs (view-only usage login)
+        - Admins
+        - Whoever deploys or maintains the server
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - CUPS server and queues
+        - Staff page (/status/)
+        - Usage report (/usage/)
+        - Usage allowances
+        - Client install (Windows / Chromebook)
+        - Backup and restore
+        - Updates, releases, and images
+        - Network layout and security
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds
+      description: Anything you do today to get around this, or other ways it could be solved.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Screenshots (with site values blurred), links, or related issues.
+
+  - type: checkboxes
+    id: no-site-values
+    attributes:
+      label: Before submitting
+      options:
+        - label: This issue contains no hostnames, domains, IP addresses, subnets, or other site-specific values.
+          required: true
