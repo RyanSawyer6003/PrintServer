@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Works out the tag for this week's dev build of the default branch, used by
+# Works out the tag for this week's dev build of the dev branch, used by
 # .github/workflows/dev-release.yml. Prints the tag, or nothing when there is
 # nothing to release (the reason goes to stderr).
 #
@@ -11,6 +11,11 @@
 #     v1.0.2-rc.1), the next one moves to the following patch: v1.0.3-dev.<date>
 # A release or rc made by hand for v1.0.2 sorts after v1.0.2-dev.* builds,
 # because "rc" sorts after "dev" and a release sorts after its pre-releases.
+#
+# The newest release is found among all tags, not by walking this branch's
+# history, so a vX.Y.Z hotfix made on main is seen too: the next dev build moves
+# past it, and dev never sorts below prod. After dev is merged into main and
+# released, nothing on dev is new, so the next week is skipped.
 #
 # Inputs (environment): BUILD_DATE (YYYYMMDD, default today, UTC).
 # Run from a full clone with tags (fetch-depth: 0), on the commit to release.

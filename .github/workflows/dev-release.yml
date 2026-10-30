@@ -1,10 +1,15 @@
-# Weekly dev build: tags the default branch as a pre-release, vX.Y.Z-dev.YYYYMMDD
-# (scripts/ci/next-dev-tag.sh), with GitHub's notes listing what was merged, and
-# publishes it to the dev channel. Weeks with nothing merged since the newest
-# release are skipped. Servers with IMAGE_TAG=dev pick it up on their next
-# scripts/update.sh run.
+# Weekly dev build: tags the head of the dev branch as a pre-release,
+# vX.Y.Z-dev.YYYYMMDD (scripts/ci/next-dev-tag.sh), with GitHub's notes listing
+# what was merged, and publishes it to the dev channel. Weeks with nothing
+# merged since the newest release are skipped. Servers with IMAGE_TAG=dev pick
+# it up on their next scripts/update.sh run.
 #
-# Prod is unaffected: prod releases stay a hand-made vX.Y.Z release.
+# Prod is unaffected: prod releases stay a hand-made vX.Y.Z release on main,
+# after dev has been merged into main.
+#
+# The schedule is read from the default branch's copy of this file, whichever
+# branch that is; the build is always of DEV_BRANCH. The release is created on
+# the exact commit that was checked, so a merge during the run isn't included.
 name: Dev release
 
 on:
@@ -14,6 +19,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  DEV_BRANCH: dev             # the integration branch: pull requests merge here
 
 concurrency:
   group: dev-release
@@ -31,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.repository.default_branch || 'main' }}
+          ref: ${{ env.DEV_BRANCH }}
           fetch-depth: 0
           persist-credentials: false
 

@@ -13,7 +13,7 @@ docker logs <CUPS_CONTAINER_NAME>
 docker ps                   # STATUS should show (healthy) within ~1 minute
 ```
 
-**For a new server, follow [docs/deploy.md](docs/deploy.md)**: planning the values, network preparation, adding printers, the certificate, backups and monthly updates, with a checklist at the end.
+**For a new server, follow [docs/deploy.md](docs/deploy.md)**: planning the values, network preparation, adding printers, the certificate, backups and updates, with a checklist at the end.
 
 **For day-to-day tasks on a running server, see [docs/runbook.md](docs/runbook.md)**: printers, allowance overrides, the view-only login, restarts and updates, subnet changes, and what never to change.
 
@@ -42,7 +42,7 @@ The variables `.env` takes, grouped as in `.env.example`. **Required** means the
 | Variable | Default | What it does |
 |---|---|---|
 | **Images** | | |
-| `IMAGE_TAG` | `prod` | Which published images to run: the `prod` or `dev` channel, a version such as `v1.2.0`, or one exact monthly build such as `v1.2.0-20261101`. See [Releases and updates](#releases-and-updates). |
+| `IMAGE_TAG` | `prod` | Which published images to run: the `prod` or `dev` channel, a version such as `v1.2.0`, or one exact build such as `v1.2.0-20261101`. See [Releases and updates](#releases-and-updates). |
 | `IMAGE_REPO` | `ghcr.io/ryansawyer6003/printserver` | Where the images come from. The two images are `<IMAGE_REPO>-cups` and `<IMAGE_REPO>-usage`. Change it only to run your own builds. |
 | **Admin account** | | |
 | `CUPS_ADMIN_USER` | `printadmin` | Account that signs in to `/admin` and `/usage/`. Created inside the container at start, as a member of the CUPS admin group. |
@@ -282,6 +282,18 @@ A reverse proxy in front of the web UI is supported. Add its hostname to `CUPS_S
 
 The images are built by GitHub Actions and published to GitHub Container Registry as `ghcr.io/ryansawyer6003/printserver-cups` and `ghcr.io/ryansawyer6003/printserver-usage`. They are public and hold no site values: everything site-specific comes from `.env` and the volumes at run time.
 
+### Branches
+
+| Branch | Holds | Releases from it |
+|---|---|---|
+| `dev` (the default branch) | Work in progress. Pull requests merge here. | Weekly dev builds and hand-made release candidates, to the `dev` channel |
+| `main` | Stable code only: `dev` merged in after it was tested on a dev server, plus hotfixes | `vX.Y.Z` releases, to the `prod` channel |
+
+The publish workflow refuses a `vX.Y.Z` release whose commit isn't on `main`.
+
+- **Promote:** open a pull request from `dev` to `main` and merge it with **Create a merge commit**, never squash or rebase. A merge commit keeps the two branches' histories joined; a squash leaves every later promotion conflicting with the last. Then publish `vX.Y.Z` on `main` ([Publishing a release](#publishing-a-release)).
+- **Hotfix:** branch from `main`, merge the fix into `main` by pull request, and publish `vX.Y.Z` from `main` straight away. Then merge `main` into `dev` (a pull request from `main` to `dev`), or the next promotion brings the old code back over the fix. The next dev build moves past the hotfix's version, so `dev` never sorts below `prod`.
+
 ### Channels
 
 A server follows a channel through `IMAGE_TAG` in `.env`. The channel is set by the release's tag name:
@@ -290,23 +302,25 @@ A server follows a channel through `IMAGE_TAG` in `.env`. The channel is set by 
 |---|---|---|
 | `vX.Y.Z`, e.g. `v1.2.0` | Full release | `prod`: the newest of these |
 | `vX.Y.Z-<suffix>`, e.g. `v1.3.0-rc.1` | Pre-release (tick "Set as a pre-release") | `dev`: the newest release of either kind |
-| `vX.Y.Z-dev.YYYYMMDD`, e.g. `v1.0.2-dev.20261026` | Pre-release, created weekly by the Dev release workflow | `dev` |
+| `vX.Y.Z-dev.YYYYMMDD`, e.g. `v1.0.2-dev.20261026` | Pre-release, created weekly from `dev` by the Dev release workflow | `dev` |
 
 The publish workflow refuses a release whose pre-release box doesn't match its name, and tags that fit neither pattern (such as the old `v0.1`).
 
-**Weekly dev builds.** Every Monday the Dev release workflow tags the head of `main` as a pre-release and publishes it to `dev`, unless nothing has been merged since the newest release. Its notes list the pull requests merged since then. The version is chosen so the build sorts after every existing release: it keeps the version of the previous dev build, or moves to the next patch after anything else (`v1.0.1` → `v1.0.2-dev.<date>`). A release or release candidate made by hand for that version (`v1.0.2-rc.1`, `v1.0.2`) sorts after its dev builds. Prod is never changed by a dev build: promoting is still publishing `vX.Y.Z` by hand.
+**Weekly dev builds.** Every Monday the Dev release workflow tags the head of `dev` as a pre-release and publishes it to `dev`, unless nothing has been merged since the newest release. Its notes list the pull requests merged since then. The version is chosen so the build sorts after every existing release: it keeps the version of the previous dev build, or moves to the next patch after anything else (`v1.0.1` → `v1.0.2-dev.<date>`). A release or release candidate made by hand for that version (`v1.0.2-rc.1`, `v1.0.2`) sorts after its dev builds. Prod is never changed by a dev build: promoting is still publishing `vX.Y.Z` by hand.
 
-Every image also gets two version tags: `v1.2.0`, which moves with each monthly rebuild, and `v1.2.0-YYYYMMDD`, which never moves. Pin `IMAGE_TAG` to either to stop following a channel.
+**Rebuilds.** The current `dev` release is rebuilt every night and the current `prod` release every Sunday, from scratch on a fresh Debian base. A rebuild is published only if it differs from the image the channel serves now: a different commit or any Debian package version changed (`scripts/ci/image-changed.sh`). An image is also republished once it is 28 days old, so a channel image is never older than that. A security fix in Debian reaches `dev` the next night and `prod` by the next Sunday, and on nights with no change nothing is pushed, so servers restart nothing.
+
+Every image also gets two version tags: `v1.2.0`, which moves with each published rebuild of that release, and `v1.2.0-YYYYMMDD`, which never moves. Pin `IMAGE_TAG` to either to stop following a channel. The nightly `dev` rebuild never moves a `prod` release's tags, even when both channels are on the same version.
 
 ### What the workflows do
 
 | Workflow | When | What |
 |---|---|---|
-| **CI** (`.github/workflows/ci.yml`) | Every pull request and push to `main` | Scans files, commit messages and commit identities for site values (`scripts/ci/check-site-values.sh`); runs shellcheck; builds both images and smoke-tests them (`scripts/ci/smoke-test.sh`). Publishes nothing. |
-| **Publish images** (`.github/workflows/publish.yml`) | A release is published, or a dev build is tagged; the 1st of each month; by hand | For a release or dev build: builds that one. Monthly and by hand: rebuilds the current `prod` and `dev` releases. Always from scratch on a fresh Debian base, smoke-testing both images before pushing either. A failed build or test leaves the channel tags where they were. |
-| **Dev release** (`.github/workflows/dev-release.yml`) | Mondays 05:17 UTC; by hand | Tags `main` as `vX.Y.Z-dev.YYYYMMDD` (`scripts/ci/next-dev-tag.sh`), creates the pre-release with generated notes, and runs the publish workflow for it. Skips weeks with nothing merged. |
+| **CI** (`.github/workflows/ci.yml`) | Every pull request, and every push to `dev` or `main` | Scans files, commit messages and commit identities for site values (`scripts/ci/check-site-values.sh`); runs shellcheck; builds both images and smoke-tests them (`scripts/ci/smoke-test.sh`). Publishes nothing. |
+| **Publish images** (`.github/workflows/publish.yml`) | A release is published, or a dev build is tagged; nightly 06:23 UTC (`dev`); Sundays 07:43 UTC (`prod`); by hand | For a release or dev build: builds and publishes that one. Scheduled: rebuilds the channel's current release and publishes it only if it changed. By hand: rebuilds the channels chosen, with or without that check. Always from scratch on a fresh Debian base, smoke-testing both images, with the release's own test, before pushing either. A failed build or test leaves the channel tags where they were. |
+| **Dev release** (`.github/workflows/dev-release.yml`) | Mondays 05:17 UTC; by hand | Tags the head of `dev` as `vX.Y.Z-dev.YYYYMMDD` (`scripts/ci/next-dev-tag.sh`), creates the pre-release with generated notes, and runs the publish workflow for it. Skips weeks with nothing merged. |
 
-The monthly run is the security rebuild: it picks up Debian's updates without a new release. GitHub disables scheduled workflows in a public repository after 60 days with no commits; if that happens, re-enable them under **Actions**, or run them by hand.
+The scheduled rebuilds are the security updates: they pick up Debian's fixes without a new release. Scheduled runs use the workflow files on the default branch (`dev`), but each release is built and tested from its own commit. GitHub disables scheduled workflows in a public repository after 60 days with no commits; if that happens, re-enable them under **Actions**, or run them by hand. `scripts/update.sh status` on a server notices: its channel image stops getting younger than 28 days.
 
 The smoke test runs the real entrypoint (so `cupsd.conf` is rendered and checked with `cupsd -t`), checks the Status and Usage links in the CUPS pages, that `/admin` refuses plain http and asks for a login over https, that the container doesn't forward, and runs the unit tests on the image's own Python. It does not test macvlan networking, printing, or the volumes.
 
@@ -316,8 +330,8 @@ The scan fails on private addresses outside the placeholder ranges `10.10`, `10.
 
 ### Publishing a release
 
-1. Merge to `main` and wait for CI to pass.
-2. On GitHub: **Releases → Draft a new release**, create a tag on `main` (`v1.2.0`, or `v1.3.0-rc.1` with **Set as a pre-release** ticked), and **Publish release**.
+1. For `prod`: promote `dev` to `main` (or merge a hotfix into `main`) and wait for CI to pass. For a release candidate: merge to `dev`.
+2. On GitHub: **Releases → Draft a new release**, create the tag on `main` for `v1.2.0`, or on `dev` for `v1.3.0-rc.1` with **Set as a pre-release** ticked, and **Publish release**.
 3. **Actions → Publish images** shows the run. Its summary lists every tag pushed and the image digests.
 
 ### Updating a server
@@ -326,13 +340,13 @@ The scan fails on private addresses outside the placeholder ranges `10.10`, `10.
 
 ```bash
 sudo scripts/update.sh run              # update now
-sudo scripts/update.sh install-timer    # the first Saturday of each month, 03:30 (add --weekly on a dev server)
+sudo scripts/update.sh install-timer --daily   # every night at 03:30; or no option for the first Saturday of each month
 sudo scripts/update.sh status           # for monitoring: exit 0 if current, 1 if not, 2 if never run
 ```
 
-See [docs/deploy.md](docs/deploy.md#12-set-up-monthly-updates). The repository checkout on the server only needs updating when `docker-compose.yml`, the scripts or the docs change; the images don't depend on it.
+See [docs/deploy.md](docs/deploy.md#12-set-up-updates). The repository checkout on the server only needs updating when `docker-compose.yml`, the scripts or the docs change; the images don't depend on it.
 
-**Rolling back:** set `IMAGE_TAG` to the previous version or a dated tag (the release page and the workflow summary list them), then `docker compose pull --policy always && docker compose up -d`. Volumes are untouched by an image change.
+**Rolling back:** set `IMAGE_TAG` to the previous version or a dated tag (the release page and the workflow summaries list them), then `docker compose pull --policy always && docker compose up -d`. Volumes are untouched by an image change.
 
 ## Backups
 
