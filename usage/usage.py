@@ -39,6 +39,9 @@ OUT_DIR = os.environ.get("USAGE_REPORT_DIR", "/reports")
 HEARTBEAT = os.environ.get("USAGE_HEARTBEAT", "/data/heartbeat")
 STAFF_DIR = os.environ.get("USAGE_STAFF_DIR", "/staff")
 STATUS_FILE = os.environ.get("USAGE_STATUS_FILE", "/status-data/status.json")
+
+# Shown for a queue in the job log that is no longer on the server.
+REMOVED = "Removed from server"
 RECENT_JOBS = 100
 
 MONTHS = {m: i for i, m in enumerate(
@@ -183,11 +186,13 @@ CREATE INDEX IF NOT EXISTS jobs_month ON jobs (month);
 CREATE INDEX IF NOT EXISTS jobs_job ON jobs (printer, job_id);
 -- Each queue's description and location, as last seen in the printer status
 -- file, so reports can name printers in people's terms, including printers
--- removed from the server since.
+-- removed from the server since. on_server is 0 once a queue is no longer in
+-- the status file.
 CREATE TABLE IF NOT EXISTS printers (
     name        TEXT PRIMARY KEY,
     description TEXT NOT NULL DEFAULT '',
-    location    TEXT NOT NULL DEFAULT ''
+    location    TEXT NOT NULL DEFAULT '',
+    on_server   INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS allowances (
     user_key TEXT PRIMARY KEY,
@@ -213,6 +218,10 @@ def open_db(path=None):
     db = sqlite3.connect(path or DB_PATH, timeout=30)
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
+    # Databases made before on_server existed: add it. The next status file sets it.
+    if "on_server" not in {r["name"] for r in db.execute("PRAGMA table_info(printers)")}:
+        db.execute("ALTER TABLE printers ADD COLUMN on_server INTEGER NOT NULL DEFAULT 1")
+        db.commit()
     if db.execute("PRAGMA user_version").fetchone()[0] < DB_VERSION:
         merged = merge_stored_duplicates(db)
         db.execute(f"PRAGMA user_version = {DB_VERSION}")
@@ -303,20 +312,27 @@ def ingest(db, zone, log_dir=None):
 def remember_printers(db, status):
     """Store each queue's description and location from the status file.
 
-    A queue that is no longer on the server keeps what was last stored.
-    Returns True if anything changed.
+    A queue that is no longer on the server keeps what was last stored and is
+    marked as removed. Returns True if anything changed.
     """
     if not status:
         return False
     changed = False
+    names = []
     for q in status["queues"]:
+        names.append(q["name"])
         cur = db.execute(
-            "INSERT INTO printers (name, description, location) VALUES (?, ?, ?)"
+            "INSERT INTO printers (name, description, location, on_server) VALUES (?, ?, ?, 1)"
             " ON CONFLICT(name) DO UPDATE SET description = excluded.description,"
-            " location = excluded.location"
-            " WHERE description IS NOT excluded.description OR location IS NOT excluded.location",
+            " location = excluded.location, on_server = 1"
+            " WHERE description IS NOT excluded.description OR location IS NOT excluded.location"
+            " OR on_server IS NOT 1",
             (q["name"], q["description"], q["location"]))
         changed = changed or cur.rowcount > 0
+    marks = ",".join("?" * len(names))
+    cur = db.execute("UPDATE printers SET on_server = 0 WHERE on_server = 1"
+                     + (f" AND name NOT IN ({marks})" if names else ""), names)
+    changed = changed or cur.rowcount > 0
     db.commit()
     return changed
 
@@ -325,6 +341,17 @@ def printer_names(db):
     """{queue name: (description, location)} for every queue ever seen."""
     return {r["name"]: (r["description"], r["location"])
             for r in db.execute("SELECT name, description, location FROM printers")}
+
+
+def queues_on_server(db):
+    """Names of the queues on the server at the last status file, or None if none was ever read.
+
+    A queue in the job log that isn't in this set has been removed, whether or
+    not it was ever seen in a status file.
+    """
+    if not db.execute("SELECT 1 FROM printers LIMIT 1").fetchone():
+        return None
+    return {r[0] for r in db.execute("SELECT name FROM printers WHERE on_server = 1")}
 
 
 # ---------------------------------------------------------------- reporting
@@ -433,14 +460,19 @@ def render_month(db, month, months, zone, default_allowance, unreadable, is_inde
         " GROUP BY printer ORDER BY pages DESC, printer", (month,)).fetchall()
     jobs = db.execute("SELECT * FROM jobs WHERE month = ? ORDER BY ts DESC, id DESC", (month,)).fetchall()
     names = printer_names(db)
+    on_server = queues_on_server(db)
 
     def about(queue):
         return names.get(queue, ("", ""))
 
+    def removed(queue):
+        return on_server is not None and queue not in on_server
+
     def printer_cell(queue):
         """The description people know a printer by, with its location and queue name below."""
         description, location = about(queue)
-        below = " · ".join(x for x in (location, queue if description else "") if x)
+        gone = REMOVED if removed(queue) else ""
+        below = " · ".join(x for x in (location, queue if description else "", gone) if x)
         return esc(description or queue) + (f"<span class=\"sub\">{esc(below)}</span>" if below else "")
 
     total_pages = sum(u["pages"] for u in users)
@@ -506,9 +538,16 @@ def render_month(db, month, months, zone, default_allowance, unreadable, is_inde
                  "<th class=\"num\">Pages</th><th class=\"num\">Jobs</th></tr></thead><tbody>")
         for r in printers:
             description, location = about(r["printer"])
-            loc = f"<td>{esc(location)}</td>" if location else "<td class=\"unset\">Not set</td>"
-            desc = f"<td>{esc(description)}</td>" if description else "<td class=\"unset\">Not set</td>"
-            p.append(f"<tr>{loc}{desc}<td>{esc(r['printer'])}</td><td class=\"num\">{r['pages']:,}</td>"
+            if removed(r["printer"]):
+                # What it was last known as, if anything; "Not set" would read as a setting to fix.
+                loc = f"<td>{esc(location)}</td>"
+                desc = f"<td>{esc(description)}</td>"
+                queue = f"<td>{esc(r['printer'])}<span class=\"sub\">{REMOVED}</span></td>"
+            else:
+                loc = f"<td>{esc(location)}</td>" if location else "<td class=\"unset\">Not set</td>"
+                desc = f"<td>{esc(description)}</td>" if description else "<td class=\"unset\">Not set</td>"
+                queue = f"<td>{esc(r['printer'])}</td>"
+            p.append(f"<tr>{loc}{desc}{queue}<td class=\"num\">{r['pages']:,}</td>"
                      f"<td class=\"num\">{r['jobs']:,}</td></tr>")
         p.append("</tbody></table>")
     else:
@@ -854,8 +893,13 @@ def staff_usage_section(db, month, months, current, status):
              "<th>Printer name</th><th class=\"num\">Pages</th><th class=\"num\">Jobs</th>"
              "</tr></thead><tbody>")
     for r in printers:
-        # A printer that has since been removed from the server has no description or location.
-        q = queues.get(r["printer"], {})
+        q = queues.get(r["printer"])
+        if q is None:
+            # Printed to this month, since removed. Without a status file there's no way to tell.
+            p.append(f"<tr><td class=\"none\">{REMOVED if status else ''}</td><td></td>"
+                     f"<td>{esc(r['printer'])}</td><td class=\"num\">{r['pages']:,}</td>"
+                     f"<td class=\"num\">{r['jobs']:,}</td></tr>")
+            continue
         description = q.get("description", "")
         p.append(f"<tr><td>{esc(q.get('location', ''))}</td>"
                  f"<td>{esc(description if description != r['printer'] else '')}</td>"
@@ -902,7 +946,7 @@ def snapshot(db, zone, default_allowance, unreadable):
     allowances = tuple(db.execute("SELECT user_key, pages FROM allowances ORDER BY user_key").fetchall())
     months = tuple(r[0] for r in db.execute("SELECT DISTINCT month FROM jobs ORDER BY month"))
     printers = tuple(tuple(r) for r in db.execute(
-        "SELECT name, description, location FROM printers ORDER BY name"))
+        "SELECT name, description, location, on_server FROM printers ORDER BY name"))
     return (tuple(tuple(a) for a in allowances), months, printers, default_allowance,
             datetime.now(zone).strftime("%Y-%m"), unreadable)
 
