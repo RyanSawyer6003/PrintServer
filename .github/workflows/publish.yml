@@ -3,24 +3,39 @@
 #
 # - When a release is published: that release. Channel tags follow the tag
 #   names (scripts/ci/release-plan.sh): prod is the newest vX.Y.Z, dev the
-#   newest of all including vX.Y.Z-<suffix>.
+#   newest of all including vX.Y.Z-<suffix>. A vX.Y.Z release must be on main.
 # - Called by dev-release.yml with the weekly dev build's tag: the same as a
 #   release. (A release that a workflow creates doesn't trigger other
 #   workflows, so dev-release.yml calls this one directly.)
-# - Monthly: the current prod and dev releases again, on a fresh Debian base
-#   with current packages. This is the security rebuild servers pick up.
-# - By hand (Actions → Publish images → Run workflow): the same as monthly.
+# - Nightly: the current dev release again, on a fresh Debian base with
+#   current packages. Weekly: the same for the current prod release. Each is
+#   pushed only if it differs from the published image (scripts/ci/image-changed.sh),
+#   so a server updates when Debian ships a fix, not every night.
+# - By hand (Actions → Publish images → Run workflow): a rebuild of the
+#   channels chosen, with or without the check for changes.
 #
-# Every image is built from scratch, smoke-tested, and only then pushed, so a
-# Debian update that breaks the image never reaches a channel tag.
+# Every image is built from scratch and smoke-tested with its own release's
+# test before it is pushed, so a Debian update that breaks the image never
+# reaches a channel tag.
 name: Publish images
 
 on:
   release:
     types: [published]
   schedule:
-    - cron: "23 6 1 * *"     # 06:23 UTC on the 1st of each month
+    - cron: "23 6 * * *"     # nightly 06:23 UTC: the dev channel
+    - cron: "43 7 * * 0"     # Sundays 07:43 UTC: the prod channel
   workflow_dispatch:
+    inputs:
+      channels:
+        description: Channels to rebuild
+        type: choice
+        options: ["dev prod", dev, prod]
+        default: "dev prod"
+      only_if_changed:
+        description: Push only if the image differs from the published one
+        type: boolean
+        default: true
   workflow_call:
     inputs:
       release_tag:
@@ -34,6 +49,10 @@ on:
 
 permissions:
   contents: read
+
+env:
+  PROD_BRANCH: main           # stable: prod releases are tagged here
+  WEEKLY_CRON: "43 7 * * 0"   # must match the prod schedule above
 
 concurrency:
   group: publish
@@ -59,7 +78,19 @@ jobs:
           EVENT: ${{ inputs.release_tag && 'release' || github.event_name }}
           RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name }}
           PRERELEASE: ${{ inputs.release_tag && inputs.prerelease || github.event.release.prerelease }}
+          SCHEDULE: ${{ github.event.schedule }}
+          DISPATCH_CHANNELS: ${{ github.event.inputs.channels }}
+          DISPATCH_ONLY_IF_CHANGED: ${{ github.event.inputs.only_if_changed }}
         run: |
+          case $EVENT in
+            schedule)
+              if [ "$SCHEDULE" = "$WEEKLY_CRON" ]; then CHANNELS=prod; else CHANNELS=dev; fi
+              ONLY_IF_CHANGED=true ;;
+            workflow_dispatch)
+              CHANNELS=${DISPATCH_CHANNELS:-dev prod}
+              ONLY_IF_CHANGED=${DISPATCH_ONLY_IF_CHANGED:-true} ;;
+          esac
+          export CHANNELS ONLY_IF_CHANGED
           matrix=$(IMAGE_BASE="ghcr.io/${GITHUB_REPOSITORY,,}" scripts/ci/release-plan.sh)
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           {
@@ -67,7 +98,7 @@ jobs:
             if [ "$matrix" = "[]" ]; then
               echo "None: there is no vX.Y.Z or vX.Y.Z-<suffix> release yet."
             else
-              jq -r '.[] | "**\(.version)**\n```\n\(.cups_tags)\n\(.usage_tags)\n```"' <<<"$matrix"
+              jq -r '.[] | "**\(.version)**\(if .only_if_changed then " (only if changed from `\(.compare_tag)`)" else "" end)\n```\n\(.cups_tags)\n\(.usage_tags)\n```"' <<<"$matrix"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -115,17 +146,61 @@ jobs:
               -t "printserver-${img}:test" "$ctx"
           done
 
+      # Scheduled rebuilds: push only if the new pair differs from what the
+      # channel serves now. Either image differing publishes both.
+      - id: changed
+        name: Compare with the published images
+        env:
+          ONLY_IF_CHANGED: ${{ matrix.only_if_changed }}
+          BASE: ghcr.io/${{ github.repository }}
+          COMPARE: ${{ matrix.compare_tag }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          if [ "$ONLY_IF_CHANGED" != true ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base=${BASE,,}
+          publish=false
+          {
+            echo "### $VERSION: compared with \`$COMPARE\`"
+            for img in cups usage; do
+              set +e
+              out=$(ci/scripts/ci/image-changed.sh "printserver-${img}:test" "$base-${img}:$COMPARE")
+              rc=$?
+              set -e
+              [ "$rc" -le 1 ] || { echo "::error::comparing the $img image failed"; exit 1; }
+              [ "$rc" -eq 0 ] && publish=true
+              echo "**$img:**"
+              echo '```'
+              echo "$out"
+              echo '```'
+            done
+            [ "$publish" = true ] && echo "Publishing." || echo "Nothing changed: not published."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+      # Each release is tested with its own test, so an older release isn't
+      # held to checks for features it doesn't have. The script from the
+      # default branch is the fallback for a release that predates it.
       - name: Smoke test (cups)
+        if: steps.changed.outputs.publish == 'true'
         env:
           SMOKE_SRC: ${{ github.workspace }}/src
-        run: ci/scripts/ci/smoke-test.sh cups printserver-cups:test
+        run: |
+          t=src/scripts/ci/smoke-test.sh; [ -x "$t" ] || t=ci/scripts/ci/smoke-test.sh
+          "$t" cups printserver-cups:test
 
       - name: Smoke test (usage)
+        if: steps.changed.outputs.publish == 'true'
         env:
           SMOKE_SRC: ${{ github.workspace }}/src
-        run: ci/scripts/ci/smoke-test.sh usage printserver-usage:test
+        run: |
+          t=src/scripts/ci/smoke-test.sh; [ -x "$t" ] || t=ci/scripts/ci/smoke-test.sh
+          "$t" usage printserver-usage:test
 
       - name: Push the tested images
+        if: steps.changed.outputs.publish == 'true'
         env:
           CUPS_TAGS: ${{ matrix.cups_tags }}
           USAGE_TAGS: ${{ matrix.usage_tags }}

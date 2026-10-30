@@ -14,7 +14,7 @@ set -euo pipefail
 
 UNIT=printserver-update             # systemd unit and state directory name
 HEALTH_WAIT=${UPDATE_HEALTH_WAIT:-300}   # seconds to wait for both containers to be healthy
-IMAGE_MAX_AGE_DAYS=45               # a channel image older than this means the monthly publish stopped
+IMAGE_MAX_AGE_DAYS=45               # a channel image older than this means the publish workflow stopped
 
 SELF=$(readlink -f "${BASH_SOURCE[0]}")
 REPO_DIR=$(dirname "$(dirname "$SELF")")
@@ -31,10 +31,12 @@ Usage: $(basename "$SELF") <command>
   status [DAYS]         Exit 0 if a run succeeded in the last DAYS (default 40) and the
                         running channel image is less than $IMAGE_MAX_AGE_DAYS days old;
                         1 if not; 2 if no run is recorded. For monitoring
-  install-timer [HH:MM] [--weekly]
+  install-timer [HH:MM] [--daily | --weekly]
                         Install the systemd timer: the first Saturday of each month at
-                        HH:MM host time (default 03:30). --weekly runs it every Monday
-                        instead, after the weekly dev build; for a server on IMAGE_TAG=dev
+                        HH:MM host time (default 03:30). --daily runs it every day, so
+                        a rebuilt image (published only when Debian changed something)
+                        arrives the next morning. --weekly runs it every Monday, after
+                        the weekly dev build
   remove-timer          Stop and remove the timer
 EOF
 }
@@ -202,14 +204,15 @@ cmd_status() {
         log "CRITICAL: last successful update was $when, more than $days days ago"
         problems=1
     fi
-    # Channel images should be rebuilt monthly. A pinned version is meant to stay put.
+    # Channel images are republished at least every 28 days, and sooner when
+    # anything changes. A pinned version is meant to stay put.
     tag=$(env_get IMAGE_TAG); tag=${tag:-prod}
     if [ "$tag" = prod ] || [ "$tag" = dev ]; then
         while read -r ref; do
             [ -n "$ref" ] || continue
             age=$(image_age_days "$ref")
             if [ -n "$age" ] && [ "$age" -gt "$IMAGE_MAX_AGE_DAYS" ]; then
-                log "CRITICAL: $ref was built $age days ago; the monthly publish may have stopped (Actions → Publish images)"
+                log "CRITICAL: $ref was built $age days ago; the scheduled publish may have stopped (Actions → Publish images)"
                 problems=1
             fi
         done < <(compose config --images 2>/dev/null)
@@ -223,6 +226,7 @@ cmd_install_timer() {
     for arg in "$@"; do
         case $arg in
             --weekly) desc="Weekly" ;;
+            --daily)  desc="Daily" ;;
             *) at=$arg ;;
         esac
     done
@@ -241,15 +245,16 @@ Wants=docker.service network-online.target
 Type=oneshot
 ExecStart=$SELF run
 EOF
-    # Monthly: the first Saturday, after the publish on the 1st. Weekly: Mondays,
-    # after the dev build early on Monday (UTC). Not Persistent: a missed run
-    # waits for the next one rather than restarting the print server in the
-    # middle of a school day.
-    if [ "$desc" = Weekly ]; then
-        when="Mon *-*-* $at:00"
-    else
-        when="Sat *-*-01..07 $at:00"
-    fi
+    # Daily: every night; a run with nothing new pulls, finds the same images
+    # and restarts nothing. Weekly: Mondays, after the dev build early on Monday
+    # (UTC). Monthly: the first Saturday. Not Persistent: a missed run waits for
+    # the next one rather than restarting the print server in the middle of a
+    # school day.
+    case $desc in
+        Daily)  when="*-*-* $at:00" ;;
+        Weekly) when="Mon *-*-* $at:00" ;;
+        *)      when="Sat *-*-01..07 $at:00" ;;
+    esac
     cat > "/etc/systemd/system/$UNIT.timer" <<EOF
 [Unit]
 Description=$desc print server image update

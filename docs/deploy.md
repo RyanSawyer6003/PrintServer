@@ -1,6 +1,6 @@
 # Deploying a new server
 
-From an empty host to a server that prints, with backups and monthly updates. Every value here is a placeholder: use your own. Once it runs, [runbook.md](runbook.md) covers the day-to-day tasks.
+From an empty host to a server that prints, with backups and automatic updates. Every value here is a placeholder: use your own. Once it runs, [runbook.md](runbook.md) covers the day-to-day tasks.
 
 The steps, in order:
 
@@ -15,7 +15,7 @@ The steps, in order:
 9. [Have clients trust the certificate](#9-have-clients-trust-the-certificate)
 10. [Install printers on clients](#10-install-printers-on-clients)
 11. [Set up backups](#11-set-up-backups)
-12. [Set up monthly updates](#12-set-up-monthly-updates)
+12. [Set up updates](#12-set-up-updates)
 13. [Optional additions](#13-optional-additions)
 
 Run the commands on the server from the repository's directory. Docker needs `sudo` unless your account is in the `docker` group.
@@ -203,7 +203,7 @@ Print a test page, check that Printing Preferences offers two-sided printing (an
 
 ## 11. Set up backups
 
-The backup saves the queues, the certificate and its key, the usage history and `.env`. Set it up before anyone depends on the server; the monthly update in step 12 won't run without a recent backup.
+The backup saves the queues, the certificate and its key, the usage history and `.env`. Set it up before anyone depends on the server; the update in step 12 won't run without a recent backup.
 
 1. Mount the backup location on the host: an external drive or a network share.
 2. In `.env`, set `RESTIC_REPOSITORY` (for example `/mnt/backup/printserver`) and `RESTIC_PASSWORD` (long and random). Keep a copy of the password in your password manager: `.env` is inside the backup, so without it the backup can't be opened.
@@ -219,15 +219,17 @@ scripts/backup.sh status                # the next day: OK
 
 The restore procedure is in [backup.md](backup.md).
 
-## 12. Set up monthly updates
+## 12. Set up updates
 
-New images are published on the 1st of each month with Debian's updates, and whenever a release is published (README, [Releases and updates](../README.md#releases-and-updates)). `scripts/update.sh` brings the server up to date:
+New images are published whenever a release is published, and when a scheduled rebuild finds a Debian update: nightly for `dev`, Sundays for `prod`, and at least every 28 days for both (README, [Releases and updates](../README.md#releases-and-updates)). `scripts/update.sh` brings the server up to date:
 
 ```bash
-sudo scripts/update.sh run              # once now, to see it work
-sudo scripts/update.sh install-timer    # the first Saturday of each month, 03:30 host time
+sudo scripts/update.sh run                     # once now, to see it work
+sudo scripts/update.sh install-timer --daily   # every night at 03:30 host time
 systemctl list-timers printserver-update.timer
 ```
+
+A nightly run that finds nothing new pulls, sees the same images, and restarts nothing, so `--daily` costs little and brings a security fix the night after it is published. Without an option the timer runs on the first Saturday of each month instead, and `--weekly` runs it on Mondays.
 
 A run:
 
@@ -236,13 +238,13 @@ A run:
 - waits for both containers to be healthy, then checks the default route and that forwarding is off;
 - if any check fails, puts the previous images back, checks again, and exits with an error.
 
-A missed run (the host was off) waits until the next month rather than restarting the server during the day.
+A missed run (the host was off) waits for the next scheduled one rather than restarting the server during the day.
 
-**A test or dev server** that follows the weekly dev builds sets `IMAGE_TAG=dev` and installs the timer with `--weekly` (Mondays, after the build): `sudo scripts/update.sh install-timer --weekly`. Give it its own `.env`, with its own addresses and server name, so it never answers for the production server. To update by hand at any time, run `sudo scripts/update.sh run`.
+**A test or dev server** that follows the dev builds sets `IMAGE_TAG=dev` and installs the timer with `--daily`, which picks up both the weekly build (Monday morning) and the nightly rebuilds. Give it its own `.env`, with its own addresses and server name, so it never answers for the production server. To update by hand at any time, run `sudo scripts/update.sh run`.
 
-**Monitoring:** `sudo scripts/update.sh status` (it reads the images, so it needs Docker access) exits 0 when an update succeeded in the last 40 days and the running image is less than 45 days old, 1 otherwise, 2 if no update has run. A channel image that keeps getting older means the monthly publish has stopped: GitHub disables scheduled workflows in a public repository after 60 days without commits. Have your monitoring run this and `scripts/backup.sh status`, and alert on a non-zero exit.
+**Monitoring:** `sudo scripts/update.sh status` (it reads the images, so it needs Docker access) exits 0 when an update succeeded in the last 40 days and the running image is less than 45 days old, 1 otherwise, 2 if no update has run. With the daily timer, pass a shorter window, such as `status 3`. Channel images are republished at least every 28 days, so one that keeps getting older means the scheduled publish has stopped: GitHub disables scheduled workflows in a public repository after 60 days without commits. Have your monitoring run this and `scripts/backup.sh status`, and alert on a non-zero exit.
 
-**Rolling back by hand:** set `IMAGE_TAG` in `.env` to a previous version (`v1.2.0`) or one exact monthly build (`v1.2.0-20261101`), then `sudo docker compose pull --policy always && sudo docker compose up -d`. Set it back to `prod` once the problem is fixed, or the server stays on that version. The release notes and the workflow summaries on GitHub list the tags.
+**Rolling back by hand:** set `IMAGE_TAG` in `.env` to a previous version (`v1.2.0`) or one exact build (`v1.2.0-20261101`), then `sudo docker compose pull --policy always && sudo docker compose up -d`. Set it back to `prod` once the problem is fixed, or the server stays on that version. The release notes and the workflow summaries on GitHub list the tags.
 
 **The repository on the server** only needs a `git pull` when the compose file, the scripts or the documentation change; release notes say when. Keep the checkout free of local edits, or `git pull` refuses.
 
@@ -264,5 +266,5 @@ A missed run (the host was off) waits until the next month rather than restartin
 - [ ] Certificate checked (full name, `CA:FALSE`), fingerprint recorded, trusted by clients
 - [ ] A Windows client installed with `Add-Printer -IppURL` (elevated) shows the right color and two-sided options, prints over `https`, and the job shows on `/usage/` under the right user
 - [ ] Backup initialized, checked, and on its nightly timer; password stored away from the server
-- [ ] Monthly update run once by hand and on its timer
+- [ ] Update run once by hand and on its timer
 - [ ] Monitoring runs `scripts/backup.sh status` and `scripts/update.sh status`
