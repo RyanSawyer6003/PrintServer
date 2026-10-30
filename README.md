@@ -71,6 +71,8 @@ The variables `.env` takes, grouped as in `.env.example`. **Required** means the
 | `STATUS_CHECK_MINUTES` | `5` | Minutes between checks of whether each printer answers on its print port. |
 | `STATUS_CHECK_TIMEOUT` | `3` | Seconds to wait for a printer to accept the connection before the check counts as failed. |
 | `STATUS_DOWN_AFTER` | `2` | Failed checks in a row before a printer shows as down. |
+| `STATUS_WEBHOOK_URL` | none | Where to send a message when a printer's status changes. See [Status notifications](#status-notifications). |
+| `STATUS_WEBHOOK_FORMAT` | `json` | `json`, or `teams` for a Teams Workflows webhook. |
 | **Usage reports** | | |
 | `USAGE_VIEWER_USER` | none | Name of an optional view-only account that can sign in to `/usage/` and nothing else. Set it together with the password. |
 | `USAGE_VIEWER_PASSWORD` | none | Password for the view-only account, applied on every start. |
@@ -221,6 +223,36 @@ Run a check by hand and print the result:
 ```bash
 docker compose exec cups printer-status once
 ```
+
+### Status notifications
+
+Every change the check finds is logged as one line, with no setup:
+
+```
+printer status change: <queue> up -> down (<description>, <location>)
+printer status change: <queue> down -> up (<description>, <location>)
+printer status change: <queue> queue idle -> stopped (<description>, <location>)
+```
+
+A printer is "down" only after `STATUS_DOWN_AFTER` failed checks, as on the staff page. "Stopped" means CUPS has disabled the queue, usually after errors sending to the printer, even if the printer still answers. Ship the container log to your log server to alert on these lines.
+
+To also be sent a message, set `STATUS_WEBHOOK_URL` in `.env` and run `docker compose up -d`. The changes found in one check go out as one message, so a switch outage that takes down fifteen printers sends one message, not fifteen. A printer seen for the first time, after a start or a restore, raises nothing.
+
+| `STATUS_WEBHOOK_FORMAT` | Send to |
+|---|---|
+| `json` (default) | Anything that accepts a JSON POST: n8n, Power Automate, a script. The body is `{"version": 1, "source": "printserver", "server": ..., "checked_at": ..., "events": [...]}`; each event has `queue`, `description`, `location`, `event` (`down`, `up`, `stopped`, `resumed`), `previous`, `current`, and `since` (UTC, for down and up). |
+| `teams` | A Teams channel, through a **Workflows** webhook: in the channel, choose **Workflows** and the template "Send webhook alerts to a channel", and paste the URL it gives you. The older Office 365 connector webhooks are being retired by Microsoft. |
+
+Send a test message after setting it up:
+
+```bash
+docker compose exec cups printer-status test-webhook
+```
+
+- **The URL is a secret.** Anyone who has it can post to the channel. It is kept in `.env`, passed only to the status check, and never logged.
+- **Firewall:** the message leaves from `SERVICES_IP` through the service network's gateway. Allow that address out to the receiver, on 443/tcp for Teams.
+- **A failed send is logged and dropped.** It is not retried, and it never delays the staff page or printing. The log line gives the reason (`printer status webhook failed (HTTP 400)`), not the URL.
+- Messages hold queue names, descriptions, and locations, never printer addresses.
 
 ## Usage reports
 
