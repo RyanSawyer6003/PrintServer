@@ -1,0 +1,95 @@
+name: Bug report
+description: Something on the print server doesn't work the way the docs say it should.
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This repository is public.** Don't include real hostnames, domains, IP
+        addresses, subnets, VLAN IDs, NIC names, user names, passwords, or printer
+        asset IDs. Replace them in logs and command output before pasting (for example
+        `printserver.example.org`, `10.10.10.50`).
+
+        **Security problems don't go here.** Report them privately through the
+        repository's Security tab ("Report a vulnerability").
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What went wrong, and what you expected to happen instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The commands you ran or the pages you opened, in order.
+      placeholder: |
+        1. docker compose up -d
+        2. Open /status/ from a staff device
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`IMAGE_TAG` from `.env`, and the version actually running if you know it (`docker compose images`)."
+      placeholder: "prod (v1.0.2)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - CUPS server and queues
+        - Printing from a client
+        - Staff page (/status/)
+        - Usage report (/usage/)
+        - Client install (Windows / Chromebook)
+        - Backup and restore (scripts/backup.sh)
+        - Updates (scripts/update.sh)
+        - Image build or CI
+        - Network layout
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: layout
+    attributes:
+      label: Network layout
+      description: From the README's "Choose a layout" section, if relevant.
+      options:
+        - A. Two NICs
+        - B. One trunked NIC
+        - C. One NIC, mixed
+        - Not relevant / not sure
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Host OS, Docker Engine and Compose versions (`docker version`, `docker compose version`), and whether the host is a VM. For client problems, the client OS.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and output
+      description: Relevant lines from `docker compose logs`, the CUPS `error_log`, or the command output. Site values removed.
+      render: shell
+
+  - type: checkboxes
+    id: no-site-values
+    attributes:
+      label: Before submitting
+      options:
+        - label: This issue, including logs, contains no hostnames, domains, IP addresses, subnets, passwords, or other site-specific values.
+          required: true
