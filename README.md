@@ -239,7 +239,7 @@ The report shows, for each month:
 - the job log (time, person, printer, pages, sides, color, computer, document name), with each printer named by its description and location
 - CSV downloads of the totals by person, the totals by printer, and the full job log
 
-Printers are named by the description and location set on each queue (`lpadmin -p <queue> -D ... -L ...`), as on the staff page. The report remembers them, so a printer removed from the server keeps its name in earlier months. A printer with neither set shows "Not set" and its queue name.
+Printers are named by the description and location set on each queue (`lpadmin -p <queue> -D ... -L ...`), as on the staff page. The report remembers them, so a printer removed from the server keeps its name in earlier months, marked "Removed from server" (so does a queue removed before it was ever seen). "Not set" means a queue that is on the server with no description or location: set them with `lpadmin`. On the staff page a removed printer shows "Removed from server" in place of its location.
 
 Settings in `.env`:
 

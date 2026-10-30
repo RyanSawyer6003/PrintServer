@@ -7,6 +7,7 @@ import csv
 import json
 import os
 import stat
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -308,11 +309,57 @@ class PrinterNamesTests(unittest.TestCase):
         printers = page[page.index("<h2>By printer</h2>"):page.index("<h2>Jobs")]
         self.assertIn("<th>Location</th><th>Description</th><th>Queue</th>", printers)
         self.assertIn("<td>Building A, Room 112</td><td>Library copier</td><td>10630</td>", printers)
-        self.assertIn('<td class="unset">Not set</td><td class="unset">Not set</td><td>99999</td>', printers)
+        # Not in the status file, so not on the server: removed, not "Not set".
+        self.assertIn('<td></td><td></td><td>99999<span class="sub">Removed from server</span></td>', printers)
+        self.assertNotIn("Not set", printers)
 
         log = page[page.index("<h2>Jobs"):]
         self.assertIn('Library copier<span class="sub">Building A, Room 112 · 10630</span>', log)
-        self.assertIn("<td>99999</td>", log)                       # no description: the queue name alone
+        self.assertIn('99999<span class="sub">Removed from server</span>', log)
+
+    def test_a_queue_on_the_server_without_details_is_not_set(self):
+        page = self.report(["10630|jdoe|1|[02/Oct/2026:15:00:00 +0000]|total|5|h|-|-|Minutes"],
+                           self.status(("10630", "", "")))
+        printers = page[page.index("<h2>By printer</h2>"):page.index("<h2>Jobs")]
+        self.assertIn('<td class="unset">Not set</td><td class="unset">Not set</td><td>10630</td>', printers)
+        self.assertNotIn("Removed from server", printers)
+
+    def test_a_removed_queue_keeps_its_last_details_and_is_marked(self):
+        usage.remember_printers(self.db, self.status(("10630", "Library copier", "Room 112")))
+        page = self.report(["10630|jdoe|1|[02/Oct/2026:15:00:00 +0000]|total|5|h|-|-|Minutes"],
+                           self.status(("11824", "Office laser", "Front office")))     # 10630 removed
+        printers = page[page.index("<h2>By printer</h2>"):page.index("<h2>Jobs")]
+        self.assertIn('<td>Room 112</td><td>Library copier</td>'
+                      '<td>10630<span class="sub">Removed from server</span></td>', printers)
+        log = page[page.index("<h2>Jobs"):]
+        self.assertIn('Library copier<span class="sub">Room 112 · 10630 · Removed from server</span>', log)
+
+    def test_a_queue_added_back_is_no_longer_marked(self):
+        usage.remember_printers(self.db, self.status(("10630", "Library copier", "Room 112")))
+        usage.remember_printers(self.db, self.status())                  # every queue removed
+        self.assertEqual(usage.queues_on_server(self.db), set())
+        self.assertTrue(usage.remember_printers(self.db, self.status(("10630", "Library copier", "Room 112"))))
+        self.assertEqual(usage.queues_on_server(self.db), {"10630"})
+
+    def test_without_any_status_file_nothing_is_called_removed(self):
+        page = self.report(["10630|jdoe|1|[02/Oct/2026:15:00:00 +0000]|total|5|h|-|-|Minutes"], None)
+        self.assertIsNone(usage.queues_on_server(self.db))
+        printers = page[page.index("<h2>By printer</h2>"):page.index("<h2>Jobs")]
+        self.assertIn('<td class="unset">Not set</td><td class="unset">Not set</td><td>10630</td>', printers)
+        self.assertNotIn("Removed from server", page)
+
+    def test_an_older_database_gains_the_on_server_column(self):
+        path = os.path.join(self.tmp.name, "old.db")
+        old = sqlite3.connect(path)
+        old.executescript("CREATE TABLE printers (name TEXT PRIMARY KEY,"
+                          " description TEXT NOT NULL DEFAULT '', location TEXT NOT NULL DEFAULT '');"
+                          "INSERT INTO printers VALUES ('10630', 'Library copier', 'Room 112');")
+        old.close()
+        db = usage.open_db(path)
+        self.addCleanup(db.close)
+        self.assertEqual(usage.queues_on_server(db), {"10630"})        # kept until a status file says otherwise
+        usage.remember_printers(db, self.status(("11824", "Office laser", "Front office")))
+        self.assertEqual(usage.queues_on_server(db), {"11824"})
 
     def test_names_are_escaped(self):
         page = self.report(["10630|jdoe|1|[02/Oct/2026:15:00:00 +0000]|total|5|h|-|-|Minutes"],
@@ -337,6 +384,13 @@ class PrinterNamesTests(unittest.TestCase):
         usage.remember_printers(self.db, self.status(("10630", "Library copier", "Room 112")))
         before = usage.snapshot(self.db, UTC, 0, 0)
         usage.remember_printers(self.db, self.status(("10630", "Library copier", "Room 114")))
+        self.assertNotEqual(usage.snapshot(self.db, UTC, 0, 0), before)
+
+    def test_a_removed_queue_rebuilds_every_month(self):
+        usage.remember_printers(self.db, self.status(("10630", "Library copier", "Room 112"),
+                                                     ("11824", "Office laser", "Front office")))
+        before = usage.snapshot(self.db, UTC, 0, 0)
+        self.assertTrue(usage.remember_printers(self.db, self.status(("11824", "Office laser", "Front office"))))
         self.assertNotEqual(usage.snapshot(self.db, UTC, 0, 0), before)
 
 
@@ -422,7 +476,8 @@ class StaffPageTests(unittest.TestCase):
         self.assertIn("<tr><td>North, library</td><td>Colour laser</td><td>20417</td>"
                       "<td class=\"num\">45</td><td class=\"num\">2</td></tr>", page)
         # A printer that is no longer on the server still has its totals.
-        self.assertIn("<tr><td></td><td></td><td>8000</td><td class=\"num\">2</td>", page)
+        self.assertIn("<tr><td class=\"none\">Removed from server</td><td></td><td>8000</td>"
+                      "<td class=\"num\">2</td>", page)
         self.assertLess(page.index("<td>9031</td>"), page.index("<td>20417</td>"))
 
     def test_headline_counts_down_printers_and_leaves_out_unchecked_ones(self):
@@ -470,6 +525,18 @@ class StaffPageTests(unittest.TestCase):
         self.assertNotIn("<img", page)
         self.assertIn("<td class=\"loc\">Room &quot;1&quot; &amp; 2</td>"
                       "<td class=\"desc\">&lt;img src=x&gt;</td>", page)
+
+    def test_a_removed_queue_is_labelled_on_the_staff_page(self):
+        self.write_log([f"north-lab|jdoe|1|{self.this_month()}|total|5|h|-|-|Doc",
+                        f"old-copier|jdoe|2|{self.this_month('02 16:00:00')}|total|3|h|-|-|Doc"])
+        status = {"checked_at": int(time.time()), "interval": 300,
+                  "queues": [status_queue("north-lab", location="Room 1")]}
+        page = self.page(status)
+        usage_part = page[page.index("<h2>Pages printed"):]
+        self.assertIn('<tr><td class="none">Removed from server</td><td></td><td>old-copier</td>', usage_part)
+        self.assertIn("<tr><td>Room 1</td>", usage_part)
+        # With no status file there is no way to know, so nothing is called removed.
+        self.assertNotIn("Removed from server", self.page(None))
 
     def test_earlier_months_get_their_own_page_without_status(self):
         self.write_log(["north-lab|jdoe|1|[02/Jan/2020:15:00:00 +0000]|total|5|h|-|-|Doc"])
