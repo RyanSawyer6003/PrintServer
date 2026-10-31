@@ -1,0 +1,43 @@
+/* Print server theme: colors, type and shape shared by every page the server
+   shows. The staff page and usage reports include this file; the CUPS image
+   adds it, with cups.css from this folder, to the end of CUPS's stylesheet.
+   Change a value here and all three change together. */
+:root {
+  color-scheme: light dark;
+  --ink: #14181f;        /* text */
+  --muted: #5a6472;      /* secondary text, table headings */
+  --bg: #f5f6f8;         /* page background */
+  --panel: #ffffff;      /* tables, cards, inputs */
+  --tint: #eef1f4;       /* hover, table heading band, code */
+  --line: #dde1e6;       /* borders and rules */
+  --link: #1b5aa0;
+  --link-hover: #12457d;
+  --up: #177245;
+  --down: #b3261e;
+  --downbg: #fbeceb;
+  --warn: #8a5a00;
+  --warnbg: #fdf5e3;
+  --idle: #8b95a1;
+  --radius: 6px;
+  --sign: Bahnschrift, "DIN Alternate", "Roboto Condensed", "Franklin Gothic Medium", "Arial Narrow", sans-serif;
+  --text: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e8ebef;
+    --muted: #9aa4b1;
+    --bg: #111418;
+    --panel: #191d23;
+    --tint: #20262d;
+    --line: #2b323b;
+    --link: #7fb5f2;
+    --link-hover: #a9cdf6;
+    --up: #4fc48c;
+    --down: #ff8f85;
+    --downbg: #33191a;
+    --warn: #e2b04a;
+    --warnbg: #2e2614;
+    --idle: #6f7a87;
+  }
+}

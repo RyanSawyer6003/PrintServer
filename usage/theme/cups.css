@@ -1,0 +1,123 @@
+/* CUPS's own pages (home, printers, jobs, administration, help) in the print
+   server theme. Added after CUPS's stylesheet at image build time, so these
+   rules win; nothing in CUPS's templates or behavior changes. Uses tokens.css.
+   The !important flags match ones in CUPS's stylesheet. */
+
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--text); margin: 0; }
+h1, h2, h3, h4, h5, h6, p, td, th { font-family: var(--text); }
+h1, h2, h3 { font-family: var(--sign); font-weight: 600; letter-spacing: -.005em; }
+h1 { font-size: clamp(28px, 5vw, 40px); line-height: 1.1; margin: 28px 0 8px; }
+h2 { font-size: 22px; line-height: 1.2; }
+h3 { font-size: 18px; line-height: 1.25; }
+h2.title, h3.title, .row .cups-body h2, .row .cups-body h3 {
+  border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+
+.cups-header, .cups-body, .cups-footer { box-sizing: border-box; width: auto; }
+.cups-header ul { margin: 0; }
+
+/* Top bar: in the page, not fixed over it, and the width of the other pages */
+.cups-header { position: static; background: transparent; box-shadow: none; color: var(--ink);
+  max-width: 1040px; margin: 0 auto; padding: 16px 16px 0; }
+.cups-header ul { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; padding: 0; }
+.cups-header ul li { float: none; }
+.cups-header a { padding: 0 !important; font-size: 14px; }
+.cups-header a:link, .cups-header a:visited { color: var(--link) !important; text-decoration: underline !important; }
+.cups-header a:hover { background: none !important; color: var(--link-hover) !important;
+  text-decoration: underline !important; }
+.cups-header a.active { background: none !important; box-shadow: none; color: var(--ink) !important;
+  font-weight: 600; text-decoration: none !important; }
+/* The first entry is CUPS's own name: shown like the server name on the other pages */
+.cups-header ul li:first-child { margin-right: auto; }
+.cups-header ul li:first-child a:link, .cups-header ul li:first-child a:visited {
+  color: var(--ink) !important; text-decoration: none !important;
+  font: 600 15px/1.4 var(--sign); letter-spacing: .02em; }
+
+.cups-body { max-width: 1040px; margin: 0 auto; padding: 0 16px 32px; }
+.row .cups-body { padding: 0; }
+.row::after { content: ""; display: table; clear: both; }
+.cups-footer { position: static; background: transparent; box-shadow: none; color: var(--muted);
+  font-size: 12px; height: auto; max-width: 1040px; margin: 0 auto; padding: 8px 16px 32px; }
+.cups-footer a:link, .cups-footer a:visited { color: var(--muted) !important; }
+
+/* Links */
+a:link, a:visited { color: var(--link); text-decoration: none; }
+a:link:hover, a:visited:hover, a:active { color: var(--link-hover); text-decoration: underline; }
+a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--link); outline-offset: 2px; }
+a:link:hover img { background: var(--tint); }
+
+/* Buttons and form fields */
+form { display: inline-block; margin: 0 6px 6px 0; }
+input[type="submit"], input[type="button"], input[type="reset"], button {
+  font: 600 14px/1.2 var(--text); color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 7px 14px; cursor: pointer; }
+input[type="submit"]:hover, input[type="button"]:hover, button:hover {
+  background: var(--tint); border-color: var(--muted); }
+input[type="text"], input[type="search"], input[type="password"], input[type="number"], input[type="url"],
+input[type="email"], input:not([type]), select, textarea {
+  font: 14px/1.3 var(--text); color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 8px; max-width: 100%; }
+textarea, input[name="DEVICE_URI"] { font-family: var(--mono); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--link); }
+label { cursor: pointer; }
+
+/* Lists of printers, classes and jobs */
+table.list { width: 100%; margin: 14px 0; border-collapse: separate; border-spacing: 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
+  font-variant-numeric: tabular-nums; }
+table.list th { background: var(--panel); border-bottom: 1px solid var(--line); border-right: 0;
+  color: var(--muted); font-size: 13px; font-weight: 600; padding: 9px 14px; }
+table.list th a { color: var(--muted); }
+table.list td { border-bottom: 1px solid var(--line); padding: 9px 14px; vertical-align: top; }
+table.list tr:last-child td { border-bottom: 0; }
+table.list tr:nth-child(even), table.list tr:nth-child(odd) { background: transparent; }
+table.list tbody tr:hover td { background: var(--tint); }
+
+/* Label and value tables: printer details, the add and modify printer steps */
+th.label { color: var(--muted); font-weight: 600; font-size: 14px; padding: 6px 12px 6px 0;
+  vertical-align: middle; }
+th.sublabel { color: var(--muted); }
+table.indent { width: 100%; margin-top: 1em; }
+table.inset { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+table.inset caption { color: var(--muted); }
+tr.data td, tr.data th, td.data { border-bottom: 1px solid var(--line); }
+div.table table { border: 1px solid var(--line); }
+div.table table td { background: var(--panel); border: 1px solid var(--line); }
+div.table table th { background: var(--tint); border-bottom: 1px solid var(--line); }
+div.summary table td, div.summary table th { background: var(--panel); border-color: var(--line); }
+div.summary table thead th { background: var(--tint); }
+
+/* Messages, code and notes */
+blockquote { background: var(--panel); border-left: 3px solid var(--warn); border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 10px 14px; }
+pre, kbd, code, p.command, p.summary { font-family: var(--mono); }
+kbd { color: var(--up); }
+p.code, pre, ul.code li { background: var(--tint); border-left: 2px solid var(--line); }
+p code, li code { background: var(--tint); border-radius: 3px; }
+pre.command em, pre.example em, p.command { color: var(--warn); }
+span.info { background: var(--tint); border: 1px solid var(--line); border-radius: 4px; color: var(--muted);
+  font-style: normal; padding: 1px 6px; }
+.conflict { background: var(--downbg); color: var(--down); }
+hr { border: 0; border-top: 1px solid var(--line); }
+td.trailer { background: var(--tint); border-color: var(--line); color: var(--muted); }
+
+/* CUPS's own dark mode used black and bright purple; the tokens cover it */
+@media (prefers-color-scheme: dark) {
+  body { background: var(--bg); color: var(--ink); }
+  a:link, a:visited { color: var(--link); }
+  a:link:hover, a:visited:hover, a:active { color: var(--link-hover); }
+  table.list th a { color: var(--muted); }
+  hr { color: var(--line); }
+}
+
+/* Narrow screens: the bar wraps, the brand takes its own line */
+@media (max-width: 640px) {
+  .cups-header ul li:first-child { flex-basis: 100%; }
+  .row .halves, .row .thirds { float: none; width: 100%; margin-left: 0; padding-bottom: 16px; }
+  table.list { display: block; overflow-x: auto; }
+  table.list th, table.list td { padding: 8px 10px; }
+  div.sidebar { float: none; max-width: none; margin: 0 0 16px; }
+  input[type="text"], input[type="search"], input[type="password"], input:not([type]), select, textarea {
+    width: 100%; min-width: 0; }
+  th.label { white-space: normal; }
+}

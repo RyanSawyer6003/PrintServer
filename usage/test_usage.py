@@ -554,5 +554,25 @@ class StaffPageTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.out, name)).st_mode), 0o644, name)
 
 
+class ThemeTests(unittest.TestCase):
+    """The theme files in theme/ are loaded and used by both kinds of page."""
+
+    def test_theme_files_are_read(self):
+        for name in ("tokens.css", "pages.css", "cups.css"):
+            self.assertTrue(os.path.isfile(os.path.join(usage.THEME_DIR, name)), name)
+        self.assertIn("--ink:", usage.THEME_CSS)
+        self.assertIn("prefers-color-scheme: dark", usage.THEME_CSS)
+        self.assertIn(".top {", usage.THEME_CSS)
+
+    def test_both_pages_start_from_the_theme(self):
+        self.assertTrue(usage.CSS.startswith(usage.THEME_CSS))
+        self.assertTrue(usage.STAFF_CSS.startswith(usage.THEME_CSS))
+
+    def test_theme_names_nothing_about_people(self):
+        # It is inlined in the staff page, which must not mention allowances or people.
+        for word in ("llowance", "person", "people"):
+            self.assertNotIn(word, usage.STAFF_CSS)
+
+
 if __name__ == "__main__":
     unittest.main()

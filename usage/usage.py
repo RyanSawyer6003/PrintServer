@@ -356,42 +356,39 @@ def queues_on_server(db):
 
 # ---------------------------------------------------------------- reporting
 
-CSS = """
-:root { color-scheme: light dark; --fg:#1c2128; --muted:#5b6470; --bg:#ffffff; --panel:#f4f6f8;
-  --line:#d8dde3; --accent:#1f5fa8; --over:#a4262c; --overbg:#fdecea; --bar:#1f5fa8; }
-@media (prefers-color-scheme: dark) { :root { --fg:#e6e9ed; --muted:#9aa4b1; --bg:#15181c;
-  --panel:#1e2329; --line:#333b45; --accent:#7ab3f0; --over:#ff9c94; --overbg:#3a1f1e; --bar:#7ab3f0; } }
-* { box-sizing: border-box; }
-body { margin:0; padding:24px 16px 48px; background:var(--bg); color:var(--fg);
-  font:15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-main { max-width:1080px; margin:0 auto; }
-h1 { font-size:24px; margin:0 0 4px; }
-h2 { font-size:17px; margin:32px 0 8px; }
-p.note { color:var(--muted); margin:0 0 12px; }
+# The print server theme (theme/), shared with the staff page and the CUPS pages.
+THEME_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "theme")
+
+
+def theme_css(*names):
+    parts = []
+    for name in names:
+        with open(os.path.join(THEME_DIR, name), "r", encoding="utf-8") as handle:
+            parts.append(handle.read())
+    return "\n".join(parts)
+
+
+THEME_CSS = theme_css("tokens.css", "pages.css")
+
+# Only on the usage reports.
+CSS = THEME_CSS + """
+main, .top { max-width:1200px; }
+.links { display:flex; flex-wrap:wrap; gap:4px 16px; margin:0 0 8px; }
+.links span { color:var(--muted); }
 .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; margin:20px 0 8px; }
-.tile { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
-.tile b { display:block; font-size:24px; line-height:1.2; }
+.tile { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:12px 14px; }
+.tile b { display:block; font:600 28px/1.15 var(--sign); }
 .tile span { color:var(--muted); font-size:13px; }
-.scroll { overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
-table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
-th, td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
-tr:last-child td { border-bottom:0; }
-th { background:var(--panel); font-size:13px; color:var(--muted); font-weight:600; }
-td.num, th.num { text-align:right; }
+.tile.alert b { color:var(--down); }
+td { white-space:nowrap; }
 td.doc { white-space:normal; min-width:260px; overflow-wrap:anywhere; }
-tr.over td { background:var(--overbg); }
-.status-over { color:var(--over); font-weight:600; }
+tr.over td { background:var(--downbg); }
+tr.over td:first-child { box-shadow:inset 3px 0 0 var(--down); }
+.status-over { color:var(--down); font-weight:600; }
 .meter { display:inline-block; width:90px; height:8px; background:var(--line); border-radius:4px;
   vertical-align:middle; margin-right:8px; overflow:hidden; }
-.meter i { display:block; height:100%; background:var(--bar); }
-tr.over .meter i { background:var(--over); }
-nav, .links { margin:4px 0 0; display:flex; flex-wrap:wrap; gap:4px 14px; }
-nav span, .links span { color:var(--muted); }
-a { color:var(--accent); }
-nav a.here { color:var(--fg); font-weight:600; text-decoration:none; }
-footer { margin-top:36px; color:var(--muted); font-size:13px; }
-.empty { color:var(--muted); padding:14px 12px; }
-.sub { display:block; color:var(--muted); font-size:12px; }
+.meter i { display:block; height:100%; background:var(--link); }
+tr.over .meter i { background:var(--down); }
 td.unset { color:var(--muted); }
 """
 
@@ -483,7 +480,11 @@ def render_month(db, month, months, zone, default_allowance, unreadable, is_inde
     p.append("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">")
     p.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
     p.append("<meta name=\"robots\" content=\"noindex\">")
-    p.append(f"<title>Print usage: {esc(title)}</title>\n<style>{CSS}</style>\n</head>\n<body>\n<main>")
+    p.append(f"<title>Print usage: {esc(title)}</title>\n<style>{CSS}</style>\n</head>\n<body>")
+    p.append("<header class=\"top\"><b>Print server</b><nav aria-label=\"Print server\">"
+             "<a href=\"/status/\">Printer status</a><a href=\"/printers/\">Printer list</a>"
+             "<a href=\"/usage/\" aria-current=\"page\">Usage detail</a>"
+             "<a href=\"/admin\">Administration</a></nav></header>\n<main>")
     p.append(f"<h1>Print usage: {esc(title)}</h1>")
     if default_allowance > 0:
         p.append(f"<p class=\"note\">Monthly allowance: {default_allowance:,} pages per person."
@@ -491,9 +492,7 @@ def render_month(db, month, months, zone, default_allowance, unreadable, is_inde
     else:
         p.append("<p class=\"note\">No monthly allowance is set. Report only: no print job is ever blocked.</p>")
 
-    p.append("<div class=\"links\"><a href=\"/status/\">Printer status</a>"
-             "<a href=\"/printers/\">Printer list</a><a href=\"/admin\">Administration</a></div>")
-    p.append("<nav aria-label=\"Months\"><span>Month:</span>")
+    p.append("<nav class=\"months\" aria-label=\"Months\"><span>Month:</span>")
     for m in sorted(months, reverse=True):
         here = " class=\"here\" aria-current=\"page\"" if m == month else ""
         p.append(f"<a{here} href=\"{m}.html\">{esc(month_title(m))}</a>")
@@ -508,7 +507,8 @@ def render_month(db, month, months, zone, default_allowance, unreadable, is_inde
     for value, label in ((f"{total_pages:,}", "pages"), (f"{len(jobs):,}", "jobs"),
                          (f"{len(users):,}", "people who printed"),
                          (f"{over_count:,}", "over their allowance")):
-        p.append(f"<div class=\"tile\"><b>{value}</b><span>{label}</span></div>")
+        alert = " alert" if label == "over their allowance" and over_count else ""
+        p.append(f"<div class=\"tile{alert}\"><b>{value}</b><span>{label}</span></div>")
     p.append("</div>")
 
     p.append("<h2>By person</h2>\n<div class=\"scroll\">")
@@ -612,47 +612,16 @@ def render(db, zone, default_allowance, unreadable, only=None, out_dir=None):
 # status and per-printer totals only. Who printed what, document names,
 # computer addresses and the job log stay in the report above.
 
-STAFF_CSS = """
-:root { color-scheme: light dark; --ink:#14181f; --muted:#5a6472; --bg:#f5f6f8; --panel:#ffffff;
-  --line:#dde1e6; --link:#1b5aa0; --up:#177245; --down:#b3261e; --downbg:#fbeceb; --warn:#8a5a00;
-  --idle:#8b95a1;
-  --sign: Bahnschrift, "DIN Alternate", "Roboto Condensed", "Franklin Gothic Medium", "Arial Narrow", sans-serif;
-  --text: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", sans-serif; }
-@media (prefers-color-scheme: dark) { :root { --ink:#e8ebef; --muted:#9aa4b1; --bg:#111418;
-  --panel:#191d23; --line:#2b323b; --link:#7fb5f2; --up:#4fc48c; --down:#ff8f85; --downbg:#33191a;
-  --warn:#e2b04a; --idle:#6f7a87; } }
-* { box-sizing: border-box; }
-body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 var(--text); }
-a { color:var(--link); }
-a:focus-visible { outline:2px solid var(--link); outline-offset:2px; border-radius:2px; }
-.top { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 24px; align-items:baseline;
-  max-width:1040px; margin:0 auto; padding:16px 16px 0; }
-.top b { font:600 15px/1.4 var(--sign); letter-spacing:.02em; }
-.top nav { display:flex; flex-wrap:wrap; gap:4px 18px; font-size:14px; }
-main { max-width:1040px; margin:0 auto; padding:0 16px 48px; }
-h1 { font:600 clamp(28px, 5vw, 44px)/1.1 var(--sign); margin:28px 0 8px; letter-spacing:-.005em;
-  display:flex; align-items:baseline; gap:.4em; }
-h2 { font:600 22px/1.2 var(--sign); margin:44px 0 8px; }
-p { margin:0 0 8px; max-width:72ch; }
-.note { color:var(--muted); }
-.note.after { margin-top:10px; }
-.notice { border-left:3px solid var(--warn); background:var(--panel); padding:10px 14px; margin:14px 0;
-  max-width:72ch; }
+STAFF_CSS = THEME_CSS + """
 .lamp { display:inline-block; width:.62em; height:.62em; border-radius:50%; background:var(--idle);
   flex:none; }
 .lamp.up { background:var(--up); }
 .lamp.down { background:var(--down); }
 .lamp.unchecked { background:transparent; box-shadow:inset 0 0 0 2px var(--idle); }
 h1 .lamp { transform:translateY(-.06em); }
-.scroll { overflow-x:auto; background:var(--panel); border:1px solid var(--line); border-radius:6px; }
-p + .scroll { margin-top:14px; }
-table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
-th, td { text-align:left; padding:9px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
-tr:last-child td { border-bottom:0; }
+.note.after { margin-top:10px; }
 table.board { margin-top:0; min-width:760px; }
 table.board td { overflow-wrap:anywhere; }
-th { font-size:13px; font-weight:600; color:var(--muted); white-space:nowrap; }
-td.num, th.num { text-align:right; white-space:nowrap; }
 td.loc { font-weight:600; }
 td.none { color:var(--muted); font-weight:400; }
 td.state { white-space:nowrap; }
@@ -662,12 +631,6 @@ tr.down td { background:var(--downbg); }
 tr.down td:first-child { box-shadow:inset 3px 0 0 var(--down); }
 .is-down { color:var(--down); font-weight:600; }
 .attn { color:var(--warn); font-weight:600; }
-.months { display:flex; flex-wrap:wrap; gap:4px 16px; margin:8px 0 16px; }
-.months span { color:var(--muted); }
-.months a.here { color:var(--ink); font-weight:600; text-decoration:none; }
-.empty { color:var(--muted); padding:14px; }
-footer { margin-top:40px; color:var(--muted); font-size:13px; }
-footer p { max-width:80ch; }
 @media (max-width:640px) {
   table.board { min-width:0; display:block; }
   table.board colgroup, table.board thead { display:none; }
@@ -689,7 +652,6 @@ footer p { max-width:80ch; }
   tr.down td:first-child { box-shadow:none; }
   table.board tr.down { border-left:3px solid var(--down); background:var(--downbg); }
   table.board tr.down td { background:transparent; }
-  th, td { padding-left:10px; padding-right:10px; }
 }
 """
 
@@ -765,7 +727,7 @@ def staff_head(title, refresh=None):
         p.append(f"<meta http-equiv=\"refresh\" content=\"{int(refresh)}\">")
     p.append(f"<title>{esc(title)}</title>\n<style>{STAFF_CSS}</style>\n</head>\n<body>")
     p.append("<header class=\"top\"><b>Print server</b><nav aria-label=\"Print server\">"
-             "<a href=\"/status/\">Printer status</a>"
+             "<a href=\"/status/\" aria-current=\"page\">Printer status</a>"
              "<a href=\"/printers/\">Printer list</a>"
              f"<a href=\"/usage/\" onclick=\"{TO_HTTPS}\">Usage detail (sign-in)</a></nav></header>\n<main>")
     return p

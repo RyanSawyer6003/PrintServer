@@ -254,6 +254,18 @@ docker compose exec cups printer-status test-webhook
 - **A failed send is logged and dropped.** It is not retried, and it never delays the staff page or printing. The log line gives the reason (`printer status webhook failed (HTTP 400)`), not the URL.
 - Messages hold queue names, descriptions, and locations, never printer addresses.
 
+## Look and feel
+
+The staff page, the usage reports and CUPS's own pages (including `/admin` and the steps for adding a printer) share one look: the same colors, fonts, widths and top bar, and a dark mode that follows the device. It comes from three files in `usage/theme/`:
+
+| File | Used by |
+|---|---|
+| `tokens.css` | Everything: colors, fonts, corner radius, and their dark-mode values |
+| `pages.css` | The staff page and usage reports |
+| `cups.css` | CUPS's pages. The CUPS image adds `tokens.css` and this file to the end of CUPS's own stylesheet at build time, so CUPS's templates and behavior are unchanged. |
+
+To change a color everywhere, change it in `tokens.css` and rebuild both images. A CUPS update that changes its page markup can leave a CUPS page looking slightly off, but it can't break it: the theme is only CSS. CI checks that the theme is served.
+
 ## Usage reports
 
 A second container, `usage`, reads the CUPS job log and writes the staff page above and a usage report that CUPS serves at `https://<server>:631/usage/`. The report requires a login: the admin account, or the view-only account.
