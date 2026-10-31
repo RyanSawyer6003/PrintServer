@@ -1,6 +1,8 @@
 FROM debian:trixie-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# apt-get upgrade: the slim base image lags Debian's security updates by up
+# to a few weeks, and the vulnerability scan in CI counts its packages too.
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     cups \
     cups-filters \
     cups-client \
