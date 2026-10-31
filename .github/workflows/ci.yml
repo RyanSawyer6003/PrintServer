@@ -57,6 +57,9 @@ jobs:
     name: Build and test (${{ matrix.image }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write   # upload the scan to code scanning
     strategy:
       fail-fast: false
       matrix:
@@ -75,3 +78,54 @@ jobs:
 
       - name: Smoke test
         run: scripts/ci/smoke-test.sh "${{ matrix.image }}" "printserver-${{ matrix.image }}:ci"
+
+      # Vulnerability scan of the image just built. Fails on a high or critical
+      # vulnerability that has a fix available; unfixed ones are reported only.
+      # Exceptions go in .grype.yaml with a review date.
+      - name: Check the scan ignore list
+        run: scripts/ci/check-grype-ignores.sh
+
+      - id: scan
+        name: Scan for vulnerabilities (report)
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: printserver-${{ matrix.image }}:ci
+          grype-version: v0.121.0
+          severity-cutoff: high
+          only-fixed: true
+          fail-build: false
+          output-format: sarif
+
+      # Forks get a read-only token, so only this repository's branches upload.
+      - name: Upload the scan to code scanning
+        if: >-
+          always() && steps.scan.outputs.sarif != '' &&
+          (github.event_name != 'pull_request' ||
+           github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: ${{ steps.scan.outputs.sarif }}
+          category: image-${{ matrix.image }}
+
+      - name: Fail on fixable high or critical vulnerabilities
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: printserver-${{ matrix.image }}:ci
+          grype-version: v0.121.0
+          severity-cutoff: high
+          only-fixed: true
+          fail-build: true
+          output-format: table
+          output-file: grype-${{ matrix.image }}.txt
+
+      - name: Scan results to the job summary
+        if: always() && hashFiles(format('grype-{0}.txt', matrix.image)) != ''
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          {
+            echo "### Vulnerabilities in the $IMAGE image (fixable only; the build fails on high or critical)"
+            echo '```'
+            cat "grype-$IMAGE.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

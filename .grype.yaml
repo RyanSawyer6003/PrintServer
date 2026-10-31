@@ -1,0 +1,26 @@
+# Grype settings for the image scans in CI (ci.yml, publish.yml, image-scan.yml).
+#
+# The workflows set what fails a scan: a vulnerability of severity high or
+# critical that has a fix available. Unfixed vulnerabilities are reported but
+# never fail a scan.
+#
+# Ignore list: only for a finding that doesn't apply to these images, such as
+# a vulnerability in a file the Dockerfile removes. Every entry needs a reason
+# that ends with "review by YYYY-MM-DD"; scripts/ci/check-grype-ignores.sh
+# fails CI once that date has passed, so nothing stays ignored by accident.
+#
+#   - vulnerability: CVE-YYYY-NNNNN
+#     reason: "<why it doesn't apply>; review by YYYY-MM-DD"
+
+ignore:
+  # The Dockerfile deletes the mailto and rss notifiers. The package that
+  # ships them is still installed, so Grype still matches it.
+  - vulnerability: CVE-2026-105326
+    reason: "mailto and rss notifiers removed in the Dockerfile; review by 2027-01-31"
+  - vulnerability: CVE-2026-34978
+    reason: "mailto and rss notifiers removed in the Dockerfile; review by 2027-01-31"
+  # The Dockerfile deletes foomatic-rip.
+  - vulnerability: CVE-2026-55453
+    reason: "foomatic-rip removed in the Dockerfile; review by 2027-01-31"
+  - vulnerability: CVE-2026-55467
+    reason: "foomatic-rip removed in the Dockerfile; review by 2027-01-31"
