@@ -199,6 +199,51 @@ jobs:
           t=src/scripts/ci/smoke-test.sh; [ -x "$t" ] || t=ci/scripts/ci/smoke-test.sh
           "$t" usage printserver-usage:test
 
+      # Report only. A rebuild exists to pick up fixes, so it is never held back
+      # by a vulnerability the published image has too. Pull requests are where
+      # the scan blocks (ci.yml); the deployed images are scanned daily
+      # (image-scan.yml). The settings and ignore list come from the default
+      # branch, like the other CI scripts.
+      - name: Scan for vulnerabilities (cups)
+        if: steps.changed.outputs.publish == 'true'
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: printserver-cups:test
+          config: ci/.grype.yaml
+          grype-version: v0.121.0
+          severity-cutoff: high
+          only-fixed: true
+          fail-build: false
+          output-format: table
+          output-file: grype-cups.txt
+
+      - name: Scan for vulnerabilities (usage)
+        if: steps.changed.outputs.publish == 'true'
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: printserver-usage:test
+          config: ci/.grype.yaml
+          grype-version: v0.121.0
+          severity-cutoff: high
+          only-fixed: true
+          fail-build: false
+          output-format: table
+          output-file: grype-usage.txt
+
+      - name: Scan results to the job summary
+        if: steps.changed.outputs.publish == 'true'
+        env:
+          VERSION: ${{ matrix.version }}
+        run: |
+          {
+            for img in cups usage; do
+              echo "### $VERSION: vulnerabilities in the $img image (fixable only, report only)"
+              echo '```'
+              cat "grype-$img.txt" 2>/dev/null || echo "(no scan output)"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Push the tested images
         if: steps.changed.outputs.publish == 'true'
         env:
