@@ -243,7 +243,7 @@ To also be sent a message, set `STATUS_WEBHOOK_URL` in `.env` and run `docker co
 | `json` (default) | Anything that accepts a JSON POST: n8n, Power Automate, a script. The body is `{"version": 1, "source": "printserver", "server": ..., "checked_at": ..., "events": [...]}`; each event has `queue`, `description`, `location`, `event` (`down`, `up`, `stopped`, `resumed`), `previous`, `current`, and `since` (UTC, for down and up). |
 | `teams` | A Teams channel, through a **Workflows** webhook: in the channel, choose **Workflows** and the template "Send webhook alerts to a channel", and paste the URL it gives you. The older Office 365 connector webhooks are being retired by Microsoft. |
 
-Send a test message after setting it up:
+The server must be able to reach the receiver over HTTPS from `SERVICES_IP`. Send a test message after setting it up:
 
 ```bash
 docker compose exec cups printer-status test-webhook
