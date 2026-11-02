@@ -13,6 +13,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     iproute2 \
     curl \
     openssl \
+    ca-certificates \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 

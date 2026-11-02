@@ -11,7 +11,8 @@
 #        server theme at the end of CUPS's stylesheet, /admin
 #        refusing plain http and asking for a login over https, the
 #        container not forwarding, only the ipp/ipps/snmp backends installed
-#        (socket:// refused, ipp:// accepted), and snmp.conf rendered with the
+#        (socket:// refused, ipp:// accepted), the CA bundle for https webhooks,
+#        and snmp.conf rendered with the
 #        IPP-only discovery rule on the printer interface.
 # usage: the unit tests on the image's own Python, then one ingest-and-render
 #        pass under the restrictions docker-compose.yml runs it with.
@@ -115,6 +116,14 @@ cups)
     grep -qE '^Address @IF\([A-Za-z0-9_.-]+\)$' <<<"$snmp" \
         || die "snmp.conf doesn't limit discovery to the printer interface: $(grep '^Address' <<<"$snmp")"
     pass "snmp.conf: discovery offers only IPP, on $(grep '^Address' <<<"$snmp" | cut -d' ' -f2)"
+
+    # The status webhook posts over https, which needs Debian's CA bundle. It's a
+    # Recommends of curl and openssl, so --no-install-recommends leaves it out.
+    out=$(docker exec "$name" sh -c 'grep -c "BEGIN CERTIFICATE" /etc/ssl/certs/ca-certificates.crt' 2>&1) \
+        || die "no CA bundle at /etc/ssl/certs/ca-certificates.crt; is ca-certificates installed?"
+    [[ $out =~ ^[0-9]+$ ]] && [ "$out" -gt 50 ] \
+        || die "the CA bundle holds '$out' certificates; is ca-certificates installed?"
+    pass "CA bundle present for https webhooks ($out certificates)"
     ;;
 
 usage)
