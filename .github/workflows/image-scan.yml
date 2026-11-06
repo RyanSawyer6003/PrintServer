@@ -58,6 +58,15 @@ jobs:
       - name: Check the scan ignore list
         run: scripts/ci/check-grype-ignores.sh
 
+      # The ignore list assumes the Dockerfile's mitigations are in the image.
+      # An image built from a release without them fails here instead of
+      # scanning clean.
+      - name: Check the mitigations the ignore list relies on
+        if: matrix.image == 'cups'
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
+        run: scripts/ci/check-mitigations.sh "$REF"
+
       - id: scan
         name: Scan for vulnerabilities (report)
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
