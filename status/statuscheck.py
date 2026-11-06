@@ -13,9 +13,16 @@ a row, so one missed check doesn't flag it.
 Printer addresses are read from CUPS, used for the connection, and never
 written anywhere: the output holds queue names, descriptions and locations.
 
+Each change is logged as one line ("printer status change: ..."): a printer
+going down or coming back up, and CUPS stopping or resuming a queue. If
+STATUS_WEBHOOK_URL is set, the changes found in one check are also sent there
+as one message, either plain JSON or (STATUS_WEBHOOK_FORMAT=teams) an Adaptive
+Card for a Teams Workflows webhook. A failed send is logged and dropped.
+
 Commands:
-    printer-status run     check in a loop (the service)
-    printer-status once    check one time and print the result
+    printer-status run            check in a loop (the service)
+    printer-status once           check one time and print the result
+    printer-status test-webhook   send a test message to STATUS_WEBHOOK_URL
 """
 
 import argparse
@@ -27,11 +34,16 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlsplit
 
 STATUS_FILE = os.environ.get("STATUS_FILE", "/var/lib/printserver/status/status.json")
 WORKERS = 16
+WEBHOOK_TIMEOUT = 10
+WEBHOOK_FORMATS = ("json", "teams")
 
 # The port a queue prints to when its address doesn't name one.
 DEFAULT_PORTS = {"socket": 9100, "ipp": 631, "ipps": 631, "lpd": 515, "http": 80, "https": 443}
@@ -225,6 +237,144 @@ def merge(previous, queues, results, now, down_after):
     return merged
 
 
+# ------------------------------------------------------------------ changes
+
+def changes(previous, merged):
+    """Compare this check with the last one. Returns a list of change events.
+
+    event is one of:
+      down      the printer is now down, and wasn't at the last check
+      up        it was down and answers again
+      stopped   CUPS has stopped the queue (it was running at the last check)
+      resumed   the queue was stopped and runs again
+
+    A printer seen for the first time raises nothing: after a start, or a
+    restore that left no status file, the first checks are a baseline, not news.
+    It still raises "down" if it is down before it is ever seen up, because by
+    then it has been checked STATUS_DOWN_AFTER times. Removed queues raise nothing.
+    """
+    before = {q.get("name"): q for q in previous if isinstance(q, dict)}
+    events = []
+    for entry in merged:
+        old = before.get(entry["name"])
+        if old is None:
+            continue
+        common = {"queue": entry["name"], "description": entry.get("description", ""),
+                  "location": entry.get("location", "")}
+        old_check, new_check = old.get("check"), entry["check"]
+        if new_check == "down" and old_check != "down":
+            events.append(dict(common, event="down", previous=old_check or "unknown",
+                               current="down", since=entry.get("since")))
+        elif new_check == "up" and old_check == "down":
+            events.append(dict(common, event="up", previous="down", current="up",
+                               since=entry.get("since")))
+        old_state, new_state = old.get("state"), entry.get("state")
+        if old_state is None:
+            continue
+        if new_state == "stopped" and old_state != "stopped":
+            events.append(dict(common, event="stopped", previous=old_state, current="stopped",
+                               since=None))
+        elif old_state == "stopped" and new_state != "stopped":
+            events.append(dict(common, event="resumed", previous="stopped", current=new_state,
+                               since=None))
+    return events
+
+
+def describe(event):
+    """One log line for one event. Holds no printer address."""
+    where = ", ".join(x for x in (event["description"], event["location"]) if x)
+    what = "queue " if event["event"] in ("stopped", "resumed") else ""
+    line = f"printer status change: {event['queue']} {what}{event['previous']} -> {event['current']}"
+    return f"{line} ({where})" if where else line
+
+
+# ------------------------------------------------------------------ webhook
+
+def webhook_settings():
+    """(url, format) from the environment, or (None, format) when no webhook is set."""
+    url = (os.environ.get("STATUS_WEBHOOK_URL") or "").strip()
+    fmt = (os.environ.get("STATUS_WEBHOOK_FORMAT") or "json").strip().lower()
+    if fmt not in WEBHOOK_FORMATS:
+        sys.exit(f"ERROR: STATUS_WEBHOOK_FORMAT must be one of {', '.join(WEBHOOK_FORMATS)},"
+                 f" got {fmt!r}")
+    if url and urlsplit(url).scheme.lower() not in ("http", "https"):
+        # Don't echo the value: the URL is a secret.
+        sys.exit("ERROR: STATUS_WEBHOOK_URL must start with https:// (or http://)")
+    return url or None, fmt
+
+
+def iso(timestamp):
+    if not timestamp:
+        return None
+    return datetime.fromtimestamp(timestamp, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+EVENT_TITLES = {"down": "Printer down", "up": "Printer back up",
+                "stopped": "Queue stopped", "resumed": "Queue resumed"}
+
+
+def payload(events, checked_at, fmt, server=""):
+    """The body to send for one check's events."""
+    items = [dict(e, since=iso(e.get("since"))) for e in events]
+    if fmt == "json":
+        return {"version": 1, "source": "printserver", "server": server,
+                "checked_at": iso(checked_at), "events": items}
+
+    count = len(items)
+    title = (EVENT_TITLES[items[0]["event"]] + f": {items[0]['queue']}" if count == 1
+             else f"{count} printer status changes")
+    body = [{"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium",
+             "wrap": True}]
+    if server:
+        body.append({"type": "TextBlock", "text": server, "isSubtle": True, "spacing": "None",
+                     "wrap": True})
+    for item in items:
+        facts = [{"title": "Change", "value": f"{item['previous']} → {item['current']}"}]
+        if item["description"]:
+            facts.append({"title": "Description", "value": item["description"]})
+        if item["location"]:
+            facts.append({"title": "Location", "value": item["location"]})
+        if item["since"]:
+            facts.append({"title": "Since", "value": item["since"]})
+        body.append({"type": "TextBlock", "text": f"{EVENT_TITLES[item['event']]}: {item['queue']}",
+                     "weight": "Bolder", "separator": True, "wrap": True})
+        body.append({"type": "FactSet", "facts": facts})
+    card = {"type": "AdaptiveCard", "version": "1.4", "body": body}
+    return {"type": "message",
+            "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive",
+                             "contentUrl": None, "content": card}]}
+
+
+def send(url, body, timeout=WEBHOOK_TIMEOUT):
+    """POST JSON. Returns None on success, or a short error that never contains the URL."""
+    request = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST",
+                                     headers={"Content-Type": "application/json",
+                                              "User-Agent": "printserver-status"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            response.read(1024)
+        return None
+    except urllib.error.HTTPError as error:
+        return f"HTTP {error.code}"
+    except urllib.error.URLError as error:
+        return f"{type(error.reason).__name__}: {error.reason}"
+    except (OSError, ValueError) as error:
+        return type(error).__name__
+
+
+def report(events, checked_at, webhook=(None, "json"), server=""):
+    """Log each event, and send them all as one webhook message if one is set."""
+    for event in events:
+        print(describe(event), flush=True)
+    url, fmt = webhook
+    if not events or not url:
+        return
+    error = send(url, payload(events, checked_at, fmt, server))
+    if error:
+        print(f"printer status webhook failed ({error}); {len(events)} change(s) not sent",
+              file=sys.stderr, flush=True)
+
+
 # ------------------------------------------------------------------ service
 
 def load(path):
@@ -247,12 +397,15 @@ def save(path, document):
     os.replace(temp, path)
 
 
-def cycle(path, interval, timeout, down_after):
+def cycle(path, interval, timeout, down_after, webhook=(None, "json"), server=""):
     queues, targets = read_queues()
     results = check_all(targets, timeout)
     now = int(time.time())
-    merged = merge(load(path), queues, results, now, down_after)
+    previous = load(path)
+    merged = merge(previous, queues, results, now, down_after)
     save(path, {"version": 1, "checked_at": now, "interval": interval, "queues": merged})
+    # After the save, so a slow or failing webhook never holds back the staff page.
+    report(changes(previous, merged), now, webhook, server)
     return merged
 
 
@@ -261,6 +414,10 @@ def settings():
     timeout = env_int("STATUS_CHECK_TIMEOUT", 3)
     down_after = env_int("STATUS_DOWN_AFTER", 2)
     return interval, timeout, down_after
+
+
+def server_name():
+    return (os.environ.get("CUPS_SERVER_NAME") or "").strip()
 
 
 def summary(merged):
@@ -273,14 +430,17 @@ def summary(merged):
 
 def run_service():
     interval, timeout, down_after = settings()
+    webhook = webhook_settings()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    notify = f"webhook ({webhook[1]})" if webhook[0] else "no webhook"
     print(f"printer status check started: every {interval // 60} min, timeout {timeout}s,"
-          f" down after {down_after} failed checks", flush=True)
+          f" down after {down_after} failed checks, {notify}", flush=True)
     last = None
     while True:
         wait = interval
         try:
-            now = summary(cycle(STATUS_FILE, interval, timeout, down_after))
+            now = summary(cycle(STATUS_FILE, interval, timeout, down_after, webhook,
+                                server_name()))
             if now != last:
                 print(f"printer status: {now}", flush=True)
             last = now
@@ -293,19 +453,39 @@ def run_service():
 
 def run_once():
     interval, timeout, down_after = settings()
-    for q in cycle(STATUS_FILE, interval, timeout, down_after):
+    # Changes found here are reported too: the service won't see them again.
+    for q in cycle(STATUS_FILE, interval, timeout, down_after, webhook_settings(), server_name()):
         print(f"{q['name']}: {q['check']} (queue {q['state']},"
               f" {'accepting' if q['accepting'] else 'not accepting'}, {q['jobs']} waiting)")
 
 
+def test_webhook():
+    """Send one sample message, so the receiving end can be set up and checked."""
+    url, fmt = webhook_settings()
+    if not url:
+        print("STATUS_WEBHOOK_URL is not set", file=sys.stderr)
+        return 2
+    sample = [{"queue": "test-queue", "description": "Test message from the print server",
+               "location": "Not a real printer", "event": "down", "previous": "up",
+               "current": "down", "since": int(time.time())}]
+    error = send(url, payload(sample, int(time.time()), fmt, server_name()))
+    if error:
+        print(f"test message failed ({error})", file=sys.stderr)
+        return 1
+    print(f"test message sent ({fmt})")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="printer-status", description="Printer up/down check for CUPS.")
-    parser.add_argument("command", choices=("run", "once"))
+    parser.add_argument("command", choices=("run", "once", "test-webhook"))
     args = parser.parse_args(argv)
     if args.command == "run":
         run_service()
-    else:
+    elif args.command == "once":
         run_once()
+    else:
+        sys.exit(test_webhook())
 
 
 if __name__ == "__main__":

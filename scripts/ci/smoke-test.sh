@@ -7,10 +7,12 @@
 # cups:  the unit tests for the status check, on the image's own Python; then
 #        the real entrypoint (cupsd.conf rendered and checked with cupsd -t),
 #        the scheduler answering, the Status and Usage links in the CUPS pages
-#        (the navigation patch against Debian's packaged templates), /admin
+#        (the navigation patch against Debian's packaged templates), the print
+#        server theme at the end of CUPS's stylesheet, /admin
 #        refusing plain http and asking for a login over https, the
 #        container not forwarding, only the ipp/ipps/snmp backends installed
-#        (socket:// refused, ipp:// accepted), and snmp.conf rendered with the
+#        (socket:// refused, ipp:// accepted), the CA bundle for https webhooks,
+#        and snmp.conf rendered with the
 #        IPP-only discovery rule on the printer interface.
 # usage: the unit tests on the image's own Python, then one ingest-and-render
 #        pass under the restrictions docker-compose.yml runs it with.
@@ -78,6 +80,12 @@ cups)
     grep -q 'href="/usage/"' <<<"$page"  || die "Usage link missing from the CUPS navigation bar"
     pass "/printers/ loads; navigation bar has Status and Usage"
 
+    css=$("${c[@]}" "http://$name_on_cert:631/cups.css")
+    grep -q -- '--- Print server theme' <<<"$css" || die "the print server theme is missing from /cups.css"
+    grep -q -- '--ink:' <<<"$css" || die "the theme's color tokens are missing from /cups.css"
+    grep -q 'href="/cups.css"' <<<"$page" || die "the CUPS pages no longer load /cups.css"
+    pass "/cups.css carries the print server theme, and the CUPS pages load it"
+
     code=$("${c[@]}" -o /dev/null -w '%{http_code}' "http://$name_on_cert:631/admin/")
     [ "$code" != 200 ] || die "/admin/ answered over plain http"
     pass "/admin/ over http refused ($code)"
@@ -108,6 +116,14 @@ cups)
     grep -qE '^Address @IF\([A-Za-z0-9_.-]+\)$' <<<"$snmp" \
         || die "snmp.conf doesn't limit discovery to the printer interface: $(grep '^Address' <<<"$snmp")"
     pass "snmp.conf: discovery offers only IPP, on $(grep '^Address' <<<"$snmp" | cut -d' ' -f2)"
+
+    # The status webhook posts over https, which needs Debian's CA bundle. It's a
+    # Recommends of curl and openssl, so --no-install-recommends leaves it out.
+    out=$(docker exec "$name" sh -c 'grep -c "BEGIN CERTIFICATE" /etc/ssl/certs/ca-certificates.crt' 2>&1) \
+        || die "no CA bundle at /etc/ssl/certs/ca-certificates.crt; is ca-certificates installed?"
+    [[ $out =~ ^[0-9]+$ ]] && [ "$out" -gt 50 ] \
+        || die "the CA bundle holds '$out' certificates; is ca-certificates installed?"
+    pass "CA bundle present for https webhooks ($out certificates)"
     ;;
 
 usage)

@@ -1,6 +1,8 @@
 FROM debian:trixie-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# apt-get upgrade: the slim base image lags Debian's security updates by up
+# to a few weeks, and the vulnerability scan in CI counts its packages too.
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     cups \
     cups-filters \
     cups-client \
@@ -11,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     curl \
     openssl \
+    ca-certificates \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -39,6 +42,16 @@ COPY snmp.conf.template /opt/cups/snmp.conf.template
 # silently disappear.
 COPY nav-links.sh /opt/printserver/nav-links.sh
 RUN bash /opt/printserver/nav-links.sh
+
+# The print server theme (usage/theme/): added to the end of CUPS's stylesheet,
+# so the CUPS pages look like the staff page and usage reports. CUPS's own
+# rules stay in place underneath; nothing else about the pages changes.
+COPY usage/theme/tokens.css usage/theme/cups.css /opt/printserver/theme/
+RUN css=/usr/share/cups/doc-root/cups.css \
+    && [ -f "$css" ] \
+    && { printf '\n/* --- Print server theme (usage/theme) --- */\n'; \
+         cat /opt/printserver/theme/tokens.css /opt/printserver/theme/cups.css; } >> "$css" \
+    && grep -q -- '--- Print server theme' "$css"
 
 # Printer up/down check, started by the entrypoint. Standard library only.
 COPY status/statuscheck.py /opt/printserver/statuscheck.py

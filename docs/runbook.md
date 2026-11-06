@@ -226,6 +226,15 @@ For monitoring, `scripts/backup.sh status` and `scripts/update.sh status` exit n
 
 A printer down on the staff page means it didn't accept a connection on its print port: check it is on, on the network, and has the address the queue uses (`lpstat -v <queue>`).
 
+Status changes are logged as `printer status change:` lines, and sent to `STATUS_WEBHOOK_URL` if it is set:
+
+```bash
+sudo docker compose logs cups | grep "printer status change"    # every change since the container started
+sudo docker compose exec cups printer-status test-webhook       # check the webhook still works
+```
+
+A `printer status webhook failed` line means the receiver refused the message or couldn't be reached. HTTP 401, 403, or 404 usually means the URL was revoked or the workflow was deleted.
+
 ## What never to change
 
 | Don't | Because |

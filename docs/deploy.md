@@ -253,6 +253,7 @@ A missed run (the host was off) waits for the next scheduled one rather than res
 - **View-only login for helpdesk staff:** set `USAGE_VIEWER_USER` and `USAGE_VIEWER_PASSWORD` in `.env`, then `sudo docker compose up -d`. The account can open `/usage/` and nothing else. README, [View-only login](../README.md#view-only-login).
 - **Reverse proxy** for the admin pages, with a trusted certificate and no port number: forward to `https://<server>:631`, add the proxy's name to `CUPS_SERVER_ALIASES`, and set `CUPS_ADMIN_SUBNETS` to the proxy's address only. Print jobs still go straight to the server. README, [Reverse proxy](../README.md#reverse-proxy).
 - **Isolate the printer network** once every client prints through the server: block the printer network from reaching the LAN, and clients from reaching the printers directly. Allow only the server's `PRINTER_IP` to the printers, and the printers out to the internet for firmware updates. Then turn off IP forwarding on the Docker host itself (`net.ipv4.ip_forward=0`).
+- **Printer status notifications:** set `STATUS_WEBHOOK_URL` (and `STATUS_WEBHOOK_FORMAT=teams` for a Teams Workflows webhook), run `sudo docker compose up -d`, allow `SERVICES_IP` out to the receiver, and send a test with `sudo docker compose exec cups printer-status test-webhook`. README, [Status notifications](../README.md#status-notifications).
 - **Logs:** CUPS writes `error_log` and `page_log` on the `cups_logs` volume; ship them to your log server if you have one.
 
 ## Checklist

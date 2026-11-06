@@ -1,0 +1,95 @@
+# Daily vulnerability scan of the published images, as servers pull them:
+#   ghcr.io/<owner>/printserver-cups and printserver-usage, channels prod and dev.
+#
+# New vulnerabilities are published after an image is built, so a clean pull
+# request doesn't mean a clean server. Findings go to each job's summary.
+#
+# Not uploaded to code scanning: this workflow runs only on the default branch,
+# so its results would be configurations no pull request has, and every pull
+# request's code scanning check would report them as "not found". The
+# Security tab still gets the images built by CI (ci.yml) for each branch.
+#
+# The run fails when a channel serves a high or critical vulnerability that has
+# a fix available, so GitHub sends its failed-workflow email. The nightly dev
+# rebuild and the weekly prod rebuild (publish.yml) pick the fix up on their
+# own; to ship it to prod sooner, run Actions → Publish images → prod.
+# Unfixed vulnerabilities are reported but never fail the run. The ignore list
+# is .grype.yaml on the default branch.
+name: Image scan
+
+on:
+  schedule:
+    - cron: "7 9 * * *"      # daily 09:07 UTC, after the nightly and weekly rebuilds
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-scan
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: ${{ matrix.image }}:${{ matrix.channel }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [cups, usage]
+        channel: [prod, dev]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: ref
+        name: Image reference
+        env:
+          IMAGE: ${{ matrix.image }}
+          CHANNEL: ${{ matrix.channel }}
+        run: |
+          ref="ghcr.io/${GITHUB_REPOSITORY,,}-${IMAGE}:${CHANNEL}"
+          docker pull --quiet "$ref"
+          digest=$(docker inspect -f '{{index .RepoDigests 0}}' "$ref")
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "Scanning \`$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check the scan ignore list
+        run: scripts/ci/check-grype-ignores.sh
+
+      # The ignore list assumes the Dockerfile's mitigations are in the image.
+      # An image built from a release without them fails here instead of
+      # scanning clean.
+      - name: Check the mitigations the ignore list relies on
+        if: matrix.image == 'cups'
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
+        run: scripts/ci/check-mitigations.sh "$REF"
+
+      - name: Fail on fixable high or critical vulnerabilities
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: ${{ steps.ref.outputs.ref }}
+          grype-version: v0.121.0
+          severity-cutoff: high
+          only-fixed: true
+          fail-build: true
+          output-format: table
+          output-file: grype.txt
+
+      - name: Scan results to the job summary
+        if: always() && hashFiles('grype.txt') != ''
+        env:
+          IMAGE: ${{ matrix.image }}
+          CHANNEL: ${{ matrix.channel }}
+        run: |
+          {
+            echo "### $IMAGE:$CHANNEL: vulnerabilities with a fix available"
+            echo '```'
+            cat grype.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

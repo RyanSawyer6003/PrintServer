@@ -202,6 +202,16 @@ for name in STATUS_CHECK_MINUTES STATUS_CHECK_TIMEOUT STATUS_DOWN_AFTER; do
         exit 1
     fi
 done
+case "${STATUS_WEBHOOK_FORMAT:-json}" in
+    json|teams) ;;
+    *) echo "ERROR: STATUS_WEBHOOK_FORMAT must be json or teams, got '${STATUS_WEBHOOK_FORMAT}'" >&2
+       exit 1 ;;
+esac
+if [ -n "${STATUS_WEBHOOK_URL:-}" ] && [[ ! "$STATUS_WEBHOOK_URL" =~ ^https?:// ]]; then
+    # Don't echo the value: the URL is a secret.
+    echo "ERROR: STATUS_WEBHOOK_URL must start with https:// (or http://)" >&2
+    exit 1
+fi
 STATUS_DIR=/var/lib/printserver/status
 mkdir -p "$STATUS_DIR"
 chown nobody:nogroup "$STATUS_DIR"
@@ -209,11 +219,15 @@ chmod 755 "$STATUS_DIR"
 (
     sleep 5    # let cupsd, started below, come up before the first check
     # A clean environment: the check has no use for the passwords in this one.
+    # The webhook URL is the one secret it gets, because it sends to it.
     while true; do
         env -i PATH="$PATH" PYTHONUNBUFFERED=1 \
             STATUS_CHECK_MINUTES="${STATUS_CHECK_MINUTES:-}" \
             STATUS_CHECK_TIMEOUT="${STATUS_CHECK_TIMEOUT:-}" \
             STATUS_DOWN_AFTER="${STATUS_DOWN_AFTER:-}" \
+            STATUS_WEBHOOK_URL="${STATUS_WEBHOOK_URL:-}" \
+            STATUS_WEBHOOK_FORMAT="${STATUS_WEBHOOK_FORMAT:-}" \
+            CUPS_SERVER_NAME="${CUPS_SERVER_NAME:-}" \
             setpriv --reuid=nobody --regid=nogroup --clear-groups \
             python3 /opt/printserver/statuscheck.py run || true
         sleep 15
