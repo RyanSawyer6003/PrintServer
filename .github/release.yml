@@ -1,0 +1,25 @@
+# Groups GitHub's generated release notes by pull request label.
+# A pull request appears under the first category whose label it has.
+# Label security fixes "security" so they are listed first; see SECURITY.md.
+changelog:
+  exclude:
+    labels:
+      - duplicate
+      - invalid
+      - wontfix
+  categories:
+    - title: Security
+      labels:
+        - security
+    - title: Bug fixes
+      labels:
+        - bug
+    - title: New and changed
+      labels:
+        - enhancement
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Other changes
+      labels:
+        - "*"
