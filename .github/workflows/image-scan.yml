@@ -2,8 +2,12 @@
 #   ghcr.io/<owner>/printserver-cups and printserver-usage, channels prod and dev.
 #
 # New vulnerabilities are published after an image is built, so a clean pull
-# request doesn't mean a clean server. Every run uploads all findings to code
-# scanning (Security tab), one category per image and channel.
+# request doesn't mean a clean server. Findings go to each job's summary.
+#
+# Not uploaded to code scanning: this workflow runs only on the default branch,
+# so its results would be configurations no pull request has, and every pull
+# request's code scanning check would report them as "not found". The
+# Security tab still gets the images built by CI (ci.yml) for each branch.
 #
 # The run fails when a channel serves a high or critical vulnerability that has
 # a fix available, so GitHub sends its failed-workflow email. The nightly dev
@@ -32,7 +36,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      security-events: write   # upload the scan to code scanning
     strategy:
       fail-fast: false
       matrix:
@@ -58,23 +61,14 @@ jobs:
       - name: Check the scan ignore list
         run: scripts/ci/check-grype-ignores.sh
 
-      - id: scan
-        name: Scan for vulnerabilities (report)
-        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
-        with:
-          image: ${{ steps.ref.outputs.ref }}
-          grype-version: v0.121.0
-          severity-cutoff: high
-          only-fixed: true
-          fail-build: false
-          output-format: sarif
-
-      - name: Upload the scan to code scanning
-        if: always() && steps.scan.outputs.sarif != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
-        with:
-          sarif_file: ${{ steps.scan.outputs.sarif }}
-          category: ghcr-${{ matrix.image }}-${{ matrix.channel }}
+      # The ignore list assumes the Dockerfile's mitigations are in the image.
+      # An image built from a release without them fails here instead of
+      # scanning clean.
+      - name: Check the mitigations the ignore list relies on
+        if: matrix.image == 'cups'
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
+        run: scripts/ci/check-mitigations.sh "$REF"
 
       - name: Fail on fixable high or critical vulnerabilities
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
