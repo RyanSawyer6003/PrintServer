@@ -410,3 +410,13 @@ See [docs/backup.md](docs/backup.md) for the restore procedure, monitoring, and 
 - With macvlan, the Docker host can't reach the container's IPs directly. Test from another machine on a client subnet.
 - **IPP Everywhere queues show the model as `Printer - IPP Everywhere`.** This is an upstream CUPS bug, not a problem with the printers or this repository. The CVE-2024-47175 hardening (upstream CUPS 2.4.11) cleans up the make and model a printer reports, but a loop meant to strip trailing spaces cuts the string at every space: `TOSHIBA e-STUDIO6518A` becomes `TOSHIBA`, and with no model left CUPS falls back to `Printer`. Upstream fixed it in CUPS 2.4.12. Debian backported the hardening into both of the CUPS packages this image is built on (2.4.2 in Debian 12 for `prod`, 2.4.10 in Debian 13 for `dev`), but not the fix yet. It is cosmetic: color, two-sided and the other capabilities are read separately and are correct, and Windows clients are renamed to the queue name at install. Nothing in this repository works around it; it goes away when the image's CUPS package includes the fix.
 - **Selecting a discovered printer garbles the Connection field on Debian 13 images** (the `dev` channel). In CUPS 2.4.10 the Add Printer page reads the selected device with `cgiGetTextfield()`, which returns the variable's own storage, then stores the URI back over it, so it copies from freed memory. Upstream CUPS fixed it in 2.4.12 (back to `cgiGetVariable()`, which returns a copy); Debian 13's package doesn't have the fix yet. Debian 12 images (`prod`) aren't affected. Either way, add printers by their DNS name or IP address, entered by hand ([deploy.md, step 8](docs/deploy.md#8-add-the-printers)): discovered entries don't show their address until selected.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md): reporting problems, the no-site-values rule, which branch to target, and the checks a pull request has to pass.
+
+## License
+
+PrintServer is licensed under the [Apache License 2.0](LICENSE), the same license as [CUPS](https://www.cups.org) itself (CUPS 2.3 and later).
+
+The published images also contain Debian packages under their own licenses, including CUPS and the GPL-licensed printer drivers from `printer-driver-all`. Each package's license is in the image at `/usr/share/doc/<package>/copyright`.

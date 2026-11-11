@@ -143,6 +143,7 @@ jobs:
               --label "org.opencontainers.image.revision=$(git -C src rev-parse HEAD)" \
               --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               --label "org.opencontainers.image.description=PrintServer ${img} image" \
+              --label "org.opencontainers.image.licenses=Apache-2.0" \
               -t "printserver-${img}:test" "$ctx"
           done
 
